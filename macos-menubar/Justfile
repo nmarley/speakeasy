@@ -1,0 +1,174 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+# Load .env file into environment (codesigning credentials, etc.)
+set dotenv-load
+
+VERSION := `git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0"`
+
+APP_NAME := "Speakeasy"
+APP_BUNDLE := APP_NAME + ".app"
+APP_DMG := APP_NAME + ".dmg"
+APP_ZIP := APP_NAME + ".zip"
+INFO_PLIST := "assets/Info.plist"
+
+# List available commands
+default:
+    @just --list
+
+# Format Swift source files
+format:
+    swift-format format --in-place $(git ls-files --cached --others --exclude-standard "*.swift")
+
+# Build for development (debug)
+build: _check-rust-lib format
+    swift build
+
+# Run the app (debug)
+run: format
+    swift run
+
+# Build for release (universal binary)
+build-release: _check-rust-lib
+    swift build -c release --arch arm64 --arch x86_64
+
+# Create release app bundle
+bundle: build-release
+    rm -fr {{ APP_BUNDLE }}/
+    mkdir -p {{ APP_BUNDLE }}/Contents/MacOS
+    mkdir -p {{ APP_BUNDLE }}/Contents/Resources
+    cp {{ INFO_PLIST }} {{ APP_BUNDLE }}/Contents/Info.plist
+    cp Sources/{{ APP_NAME }}/Resources/AppIcon.icns {{ APP_BUNDLE }}/Contents/Resources
+    cp .build/apple/Products/Release/{{ APP_NAME }} {{ APP_BUNDLE }}/Contents/MacOS/{{ APP_NAME }}
+    @echo "Created release bundle {{ APP_BUNDLE }} using {{ INFO_PLIST }}"
+
+# Create debug app bundle
+bundle-debug: build
+    rm -fr {{ APP_BUNDLE }}/
+    mkdir -p {{ APP_BUNDLE }}/Contents/MacOS
+    mkdir -p {{ APP_BUNDLE }}/Contents/Resources
+    cp {{ INFO_PLIST }} {{ APP_BUNDLE }}/Contents/Info.plist
+    cp Sources/{{ APP_NAME }}/Resources/AppIcon.icns {{ APP_BUNDLE }}/Contents/Resources
+    cp .build/debug/{{ APP_NAME }} {{ APP_BUNDLE }}/Contents/MacOS/{{ APP_NAME }}
+    @echo "Created debug bundle {{ APP_BUNDLE }} using {{ INFO_PLIST }}"
+
+# Codesign the release bundle
+codesign: _check-env bundle
+    codesign --deep --force --options=runtime --verbose \
+        --entitlements assets/entitlements.xml \
+        --sign "$DEVELOPER_ID" {{ APP_BUNDLE }}
+    @echo "Codesigned release bundle {{ APP_BUNDLE }}"
+
+# Notarize the app bundle (submits zip to Apple)
+notarize-bundle: _check-env codesign
+    rm -f {{ APP_ZIP }}
+    ditto -c -k --keepParent --sequesterRsrc {{ APP_BUNDLE }} {{ APP_ZIP }}
+    xcrun notarytool submit {{ APP_ZIP }} --wait \
+        --apple-id "$APPLE_ID_EMAIL" \
+        --team-id "$APPLE_DEVELOPER_TEAM_ID" \
+        --password "$NOTARIZATION_PASSWORD"
+
+# Staple the notarization ticket to the app bundle
+staple-bundle: _check-env notarize-bundle
+    xcrun stapler staple {{ APP_BUNDLE }}
+
+# Build the DMG installer
+build-dmg: staple-bundle
+    rm -fr dmg-build/
+    mkdir dmg-build/
+    cp -R {{ APP_BUNDLE }} dmg-build/
+    ln -s /Applications dmg-build/
+    mkdir -p dmg-build/.background
+    cp assets/background_arrow_dmg.tiff ./dmg-build/.background/background_arrow_dmg.tiff
+    cp assets/dmg_DS_Store ./dmg-build/.DS_Store
+    hdiutil create -volname "{{ APP_NAME }}" -srcfolder dmg-build -ov -fs HFS+ -format UDZO {{ APP_DMG }}
+    @echo "Created release DMG: {{ APP_DMG }}"
+
+# Build debug DMG installer
+build-dmg-debug: bundle-debug
+    rm -fr dmg-build/
+    mkdir dmg-build/
+    cp -R {{ APP_BUNDLE }} dmg-build/
+    ln -s /Applications dmg-build/
+    mkdir -p dmg-build/.background
+    cp assets/background_arrow_dmg.tiff ./dmg-build/.background/background_arrow_dmg.tiff
+    cp assets/dmg_DS_Store ./dmg-build/.DS_Store
+    hdiutil create -volname "{{ APP_NAME }} Debug" -srcfolder dmg-build -ov -fs HFS+ -format UDZO {{ APP_NAME }}-debug.dmg
+    @echo "Created debug DMG: {{ APP_NAME }}-debug.dmg"
+
+# Notarize the DMG
+notarize-dmg: _check-env build-dmg
+    xcrun notarytool submit {{ APP_DMG }} --wait \
+        --apple-id "$APPLE_ID_EMAIL" \
+        --team-id "$APPLE_DEVELOPER_TEAM_ID" \
+        --password "$NOTARIZATION_PASSWORD"
+
+# Build, notarize, and staple the DMG (full release pipeline)
+staple-dmg: _check-env notarize-dmg
+    xcrun stapler staple {{ APP_DMG }}
+
+# Full release pipeline (convenience alias)
+release: staple-dmg
+
+# Check notarization status for a submission
+check-notarization submission_id: _check-env
+    xcrun notarytool info {{ submission_id }} \
+        --apple-id "$APPLE_ID_EMAIL" \
+        --team-id "$APPLE_DEVELOPER_TEAM_ID" \
+        --password "$NOTARIZATION_PASSWORD"
+
+# View notarization logs for a submission
+notarization-logs submission_id: _check-env
+    xcrun notarytool log {{ submission_id }} \
+        --apple-id "$APPLE_ID_EMAIL" \
+        --team-id "$APPLE_DEVELOPER_TEAM_ID" \
+        --password "$NOTARIZATION_PASSWORD"
+
+# Show current version from git tags
+version:
+    @echo "Current version is: {{ VERSION }}"
+
+# Rename the DMG to include the version number
+version-rename:
+    mv {{ APP_DMG }} {{ APP_NAME }}-{{ VERSION }}.dmg
+
+# Create a GitHub Release and upload the versioned DMG
+publish: _check-versioned-dmg
+    gh release create {{ VERSION }} {{ APP_NAME }}-{{ VERSION }}.dmg \
+        --title "{{ VERSION }}" \
+        --notes-from-tag
+
+# Clean build artifacts
+clean:
+    rm -fr {{ APP_BUNDLE }}/ dmg-build/ {{ APP_DMG }} {{ APP_ZIP }}
+
+# Clean build artifacts + build cache
+distclean: clean
+    rm -fr .build
+
+# Check that the Rust static library has been built
+_check-rust-lib:
+    #!/usr/bin/env bash
+    if [ ! -f "../core/target/release/libspeakeasy_core.a" ]; then
+        echo "Error: Rust library not found at ../core/target/release/libspeakeasy_core.a"
+        echo "Please build the Rust library first:"
+        echo "  cd ../core && just build"
+        exit 1
+    fi
+
+# Check that codesigning env vars are set
+_check-env:
+    #!/usr/bin/env bash
+    for var in DEVELOPER_ID APPLE_DEVELOPER_TEAM_ID APPLE_ID_EMAIL NOTARIZATION_PASSWORD; do
+        if [ -z "${!var:-}" ]; then
+            echo "Error: $var is not set. Check your .env file."
+            exit 1
+        fi
+    done
+
+# Check that the versioned DMG exists
+_check-versioned-dmg:
+    #!/usr/bin/env bash
+    if [ ! -f "{{ APP_NAME }}-{{ VERSION }}.dmg" ]; then
+        echo "Error: {{ APP_NAME }}-{{ VERSION }}.dmg not found. Run 'just version-rename' first."
+        exit 1
+    fi

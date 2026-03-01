@@ -1,0 +1,4 @@
+# ignore generated asset catalog
+Assets.xcassets/
+# ignore generated ICNS file
+AppIcon.icns

@@ -1,0 +1,23 @@
+.DS_Store
+.env
+/.build
+/Packages
+/*.xcodeproj
+xcuserdata/
+DerivedData/
+.swiftpm/config/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.netrc
+
+# generic ignore dir
+/ignore
+
+# ignore the compiled app bundle
+/Speakeasy.app
+# ignore the built zip
+Speakeasy.zip
+
+# ignore the built dmg and temp dmg build dir
+Speakeasy.dmg
+*.dmg
+/dmg-build

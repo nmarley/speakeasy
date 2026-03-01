@@ -1,0 +1,31 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+# List available commands
+default:
+    @just --list
+
+# Run cargo fmt
+fmt:
+    cargo fmt
+
+# Run cargo check
+check:
+    cargo check
+
+# Run tests
+test:
+    cargo test
+
+# Build universal static library (arm64 + x86_64)
+build:
+    cargo build --release --target x86_64-apple-darwin
+    cargo build --release --target aarch64-apple-darwin
+    mkdir -pv target/release
+    lipo -create \
+        target/x86_64-apple-darwin/release/libspeakeasy_core.a \
+        target/aarch64-apple-darwin/release/libspeakeasy_core.a \
+        -output target/release/libspeakeasy_core.a
+
+# Clean build artifacts
+clean:
+    cargo clean

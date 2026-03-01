@@ -1,0 +1,26 @@
+[package]
+name = "speakeasy-core"
+version = "0.6.5"
+edition = "2024"
+authors = ["Nathan Marley <nathan@glowberrylabs.com>"]
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "speakeasy_core"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+async-openai = "0.29.0"
+chrono = { version = "0.4", features = ["serde"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1"
+symphonia = { version = "0.5", features = ["all"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+
+[profile.release]
+lto = true
+codegen-units = 1
