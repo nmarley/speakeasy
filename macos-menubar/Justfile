@@ -16,22 +16,27 @@ default:
     @just --list
 
 # Format Swift source files
+[group: 'development']
 format:
     swift-format format --in-place $(git ls-files --cached --others --exclude-standard "*.swift")
 
 # Build for development (debug)
+[group: 'development']
 build: _check-rust-lib format
     swift build
 
 # Run the app (debug)
+[group: 'development']
 run: format
     swift run
 
 # Build for release (universal binary)
+[group: 'release steps']
 build-release: _check-rust-lib
     swift build -c release --arch arm64 --arch x86_64
 
 # Create release app bundle
+[group: 'release steps']
 bundle: build-release
     rm -fr {{ APP_BUNDLE }}/
     mkdir -p {{ APP_BUNDLE }}/Contents/MacOS
@@ -42,6 +47,7 @@ bundle: build-release
     @echo "Created release bundle {{ APP_BUNDLE }} using {{ INFO_PLIST }}"
 
 # Create debug app bundle
+[group: 'debug']
 bundle-debug: build
     rm -fr {{ APP_BUNDLE }}/
     mkdir -p {{ APP_BUNDLE }}/Contents/MacOS
@@ -52,6 +58,7 @@ bundle-debug: build
     @echo "Created debug bundle {{ APP_BUNDLE }} using {{ INFO_PLIST }}"
 
 # Codesign the release bundle
+[group: 'release steps']
 codesign: _check-env bundle
     codesign --deep --force --options=runtime --verbose \
         --entitlements assets/entitlements.xml \
@@ -59,6 +66,7 @@ codesign: _check-env bundle
     @echo "Codesigned release bundle {{ APP_BUNDLE }}"
 
 # Notarize the app bundle (submits zip to Apple)
+[group: 'release steps']
 notarize-bundle: _check-env codesign
     rm -f {{ APP_ZIP }}
     ditto -c -k --keepParent --sequesterRsrc {{ APP_BUNDLE }} {{ APP_ZIP }}
@@ -68,10 +76,12 @@ notarize-bundle: _check-env codesign
         --password "$NOTARIZATION_PASSWORD"
 
 # Staple the notarization ticket to the app bundle
+[group: 'release steps']
 staple-bundle: _check-env notarize-bundle
     xcrun stapler staple {{ APP_BUNDLE }}
 
 # Build the DMG installer
+[group: 'release steps']
 build-dmg: staple-bundle
     rm -fr dmg-build/
     mkdir dmg-build/
@@ -84,6 +94,7 @@ build-dmg: staple-bundle
     @echo "Created release DMG: {{ APP_DMG }}"
 
 # Build debug DMG installer
+[group: 'debug']
 build-dmg-debug: bundle-debug
     rm -fr dmg-build/
     mkdir dmg-build/
@@ -96,6 +107,7 @@ build-dmg-debug: bundle-debug
     @echo "Created debug DMG: {{ APP_NAME }}-debug.dmg"
 
 # Notarize the DMG
+[group: 'release steps']
 notarize-dmg: _check-env build-dmg
     xcrun notarytool submit {{ APP_DMG }} --wait \
         --apple-id "$APPLE_ID_EMAIL" \
@@ -103,13 +115,16 @@ notarize-dmg: _check-env build-dmg
         --password "$NOTARIZATION_PASSWORD"
 
 # Build, notarize, and staple the DMG (full release pipeline)
+[group: 'release steps']
 staple-dmg: _check-env notarize-dmg
     xcrun stapler staple {{ APP_DMG }}
 
-# Full release pipeline (convenience alias)
+# Full release pipeline: build, sign, notarize, DMG
+[group: 'release']
 release: staple-dmg
 
 # Check notarization status for a submission
+[group: 'notarization']
 check-notarization submission_id: _check-env
     xcrun notarytool info {{ submission_id }} \
         --apple-id "$APPLE_ID_EMAIL" \
@@ -117,6 +132,7 @@ check-notarization submission_id: _check-env
         --password "$NOTARIZATION_PASSWORD"
 
 # View notarization logs for a submission
+[group: 'notarization']
 notarization-logs submission_id: _check-env
     xcrun notarytool log {{ submission_id }} \
         --apple-id "$APPLE_ID_EMAIL" \
@@ -124,24 +140,29 @@ notarization-logs submission_id: _check-env
         --password "$NOTARIZATION_PASSWORD"
 
 # Show current version from git tags
+[group: 'utility']
 version:
     @echo "Current version is: {{ VERSION }}"
 
 # Rename the DMG to include the version number
+[group: 'release']
 version-rename:
     mv {{ APP_DMG }} {{ APP_NAME }}-{{ VERSION }}.dmg
 
 # Create a GitHub Release and upload the versioned DMG
+[group: 'release']
 publish: _check-versioned-dmg
     gh release create {{ VERSION }} {{ APP_NAME }}-{{ VERSION }}.dmg \
         --title "{{ VERSION }}" \
         --notes-from-tag
 
 # Clean build artifacts
+[group: 'utility']
 clean:
     rm -fr {{ APP_BUNDLE }}/ dmg-build/ {{ APP_DMG }} {{ APP_ZIP }}
 
 # Clean build artifacts + build cache
+[group: 'utility']
 distclean: clean
     rm -fr .build
 
