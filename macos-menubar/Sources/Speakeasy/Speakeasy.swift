@@ -12,7 +12,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
     private let statusOverlay = StatusOverlayController()
 
-    // API Key popover
+    // Whisper model context (loaded once, held for app lifetime)
+    private var whisperContext: OpaquePointer?
+
+    // API Key popover (for optional cleanup feature)
     var apiKeyPopover: NSPopover?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -28,8 +31,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
             }
         }
 
-        // Initialize state machine
+        // Initialize state machine (checks whether model file exists)
         stateMachine.initializeFromSettings()
+
+        // Load Whisper model if available
+        loadWhisperModel()
 
         // Log current state after initialization
         Log.general.debug(
@@ -40,10 +46,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
         pushToTalkManager = PushToTalkManager()
         pushToTalkManager?.delegate = self
-        // Initialize the audio recorder subsystem.
         audioRecorder = AudioRecorder()
 
-        // Add this line to setup the state machine listener
         setupStateMachineListener()
 
         // Ensure UI reflects current state
@@ -51,6 +55,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
         // Check Accessibility permission for keyboard monitoring
         checkAccessibilityPermission()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let ctx = whisperContext {
+            Log.general.debug("Destroying Whisper context")
+            RustFFI.destroyWhisperContext(ctx)
+            whisperContext = nil
+        }
+    }
+
+    private func loadWhisperModel() {
+        guard SettingsManager.shared.hasModel() else {
+            Log.general.info("No Whisper model found, staying in needsModel state")
+            return
+        }
+
+        let modelPath = SettingsManager.shared.modelPath()
+        Log.general.info("Loading Whisper model from: \(modelPath, privacy: .public)")
+
+        if let ctx = RustFFI.initWhisperContext(modelPath: modelPath) {
+            whisperContext = ctx
+            Log.general.info("Whisper model loaded successfully")
+        } else {
+            Log.general.error("Failed to load Whisper model from: \(modelPath, privacy: .public)")
+            // State machine stays in needsModel since we could not load it
+            stateMachine.handleModelChange(hasModel: false)
+        }
     }
 
     private func checkAccessibilityPermission() {
@@ -69,7 +100,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
                 let response = alert.runModal()
                 if response == .alertFirstButtonReturn {
-                    // Open System Settings to Accessibility pane
                     if let url = URL(
                         string:
                             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
@@ -88,10 +118,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
     func setupMenu() {
         let menu = NSMenu()
-        // Define 'status' locally from the state machine's current state.
         let status = self.stateMachine.currentState
 
-        // Use the state machine display text and icon
         statusMenuItem = NSMenuItem(title: status.displayText, action: nil, keyEquivalent: "")
         statusMenuItem?.image = status == .ready ? AppIcons.greenStatusDot : AppIcons.redStatusDot
 
@@ -100,7 +128,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
         statusMenuItem!.isEnabled = false
         menu.addItem(statusMenuItem!)
 
-        // Add version menu item
         let versionItem = NSMenuItem(
             title: "Version \(Version.full)", action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
@@ -108,11 +135,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
         menu.addItem(NSMenuItem.separator())
 
-        // Add history item with submenu
+        // History submenu
         let historyMenuItem = NSMenuItem(title: "History", action: nil, keyEquivalent: "")
         let historySubmenu = NSMenu(title: "Recent Transcripts")
 
-        // Get the most recent transcripts
         let recentTranscripts = TranscriptManager.shared.getRecentTranscripts(limit: 5)
 
         if recentTranscripts.isEmpty {
@@ -122,7 +148,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
             historySubmenu.addItem(emptyItem)
         } else {
             for transcript in recentTranscripts {
-                // Truncate long transcripts for display
                 let displayText = transcript.count > 50 ? transcript.prefix(50) + "..." : transcript
                 let transcriptItem = NSMenuItem(
                     title: String(displayText),
@@ -139,7 +164,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
         menu.addItem(NSMenuItem.separator())
 
-        // Add transcript cleanup toggle
+        // Transcript cleanup toggle
         let cleanupItem = NSMenuItem(
             title: "Clean Up Transcripts",
             action: #selector(toggleTranscriptCleanup(_:)),
@@ -149,9 +174,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
         cleanupItem.state = SettingsManager.shared.isTranscriptCleanupEnabled() ? .on : .off
         menu.addItem(cleanupItem)
 
-        menu.addItem(NSMenuItem.separator())
-
-        // Add OpenAI API key management menu item
+        // OpenAI API key management (only needed for cleanup feature)
         let apiKeyTitle =
             SettingsManager.shared.hasOpenAIKey()
             ? "Manage OpenAI API Key..." : "Add OpenAI API Key..."
@@ -193,7 +216,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
             if let button = statusItem?.button {
                 popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-
             }
         }
     }
@@ -202,31 +224,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
     func apiKeyDidSave(key: String) {
         SettingsManager.shared.storeOpenAIKey(key)
-
-        // Update state based on whether API key was provided or removed
-        let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        Log.general.debug(
-            "API key save: trimmedKey.isEmpty=\(!trimmedKey.isEmpty, privacy: .public)")
-
-        if !trimmedKey.isEmpty {
-            let success = stateMachine.process(.apiKeyProvided)
-            Log.general.debug(
-                "API key provided event processed: success=\(success, privacy: .public)")
-        } else {
-            let success = stateMachine.process(.apiKeyRemoved)
-            Log.general.debug(
-                "API key missing event processed: success=\(success, privacy: .public)")
-        }
-
-        // Log current state after API key save
-        Log.general.debug(
-            "Current state after API key save: \(String(describing: self.stateMachine.currentState), privacy: .public)"
-        )
-
-        // Use refreshUI instead of setupMenu to ensure consistent updates
         refreshUI()
         apiKeyPopover?.performClose(nil)
-        Log.general.debug("OpenAI API key saved")
+        Log.general.debug("OpenAI API key saved (used for transcript cleanup)")
     }
 
     func apiKeyDidCancel() {
@@ -236,8 +236,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
     static func main() {
         let app = NSApplication.shared
         // Explicitly set activation policy to .accessory to ensure event taps
-        // work on Tahoe LSUIElement=true in Info.plist would default to a more
-        // restrictive policy
+        // work on Tahoe (LSUIElement=true in Info.plist would default to a more
+        // restrictive policy)
         app.setActivationPolicy(.accessory)
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -246,7 +246,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
     private func setupStateMachineListener() {
         stateMachine.addListener { [weak self] state in
-            // Update the status overlay based on the app state
             switch state {
             case .recording:
                 self?.statusOverlay.updateStatus(with: "Recording")
@@ -258,14 +257,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
                 self?.statusOverlay.updateStatus(with: "Cleaning up")
                 self?.statusOverlay.show()
             default:
-                // Hide the overlay for other states
                 self?.statusOverlay.hide()
             }
         }
     }
 
     private func refreshUI() {
-        // Update status bar icon
         let state = stateMachine.currentState
 
         if let statusButton = statusItem?.button {
@@ -275,26 +272,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
             )
         }
 
-        // Update menu
         setupMenu()
     }
 }
 
 extension AppDelegate: PushToTalkManagerDelegate {
     func pushToTalkDidEngage(_ manager: PushToTalkManager) {
-        Log.general.debug("!!! AppDelegate.pushToTalkDidEngage called !!!")
+        Log.general.debug("AppDelegate.pushToTalkDidEngage called")
         let startTime = Date()
 
-        // Log current state before attempting to record
         let currentState = self.stateMachine.currentState
         Log.general.debug(
             "Push-to-talk engage - Current state: \(String(describing: currentState), privacy: .public)"
         )
-        Log.general.debug(
-            "Push-to-talk engage - SettingsManager.hasOpenAIKey(): \(SettingsManager.shared.hasOpenAIKey(), privacy: .public)"
-        )
 
-        // Try to start recording
         if !self.stateMachine.requestStartRecording() {
             Log.general.error(
                 "Failed to transition to recording state. Current state: \(String(describing: self.stateMachine.currentState), privacy: .public)"
@@ -317,21 +308,15 @@ extension AppDelegate: PushToTalkManagerDelegate {
 
             switch result {
             case .success(let url):
-                // File saved successfully, proceed with transcription
                 Log.general.info("Recording finished successfully, proceeding to transcribe.")
                 self.transcribeAudio(url: url)
 
             case .failure(let error):
-                // Handle error case
                 Log.general.error(
                     "Failed to stop recording or save file: \(error.localizedDescription, privacy: .public)"
                 )
-                // Log the full error for more details if needed
                 Log.general.debug("Detailed recording stop error: \(error, privacy: .public)")
 
-                // Transition state machine to indicate failure/readiness
-                // Using .noAudioRecorded for now as it transitions back to .ready
-                // Consider adding a specific .recordingFailed(Error) event later if needed.
                 if !self.stateMachine.process(.noAudioRecorded) {
                     Log.general.warning("Failed to transition state after recording error.")
                 }
@@ -346,7 +331,6 @@ extension AppDelegate: PushToTalkManagerDelegate {
             "Cancel requested - Current state: \(String(describing: currentState), privacy: .public)"
         )
 
-        // Only allow cancellation during recording, transcribing, or cleaning up states
         guard
             currentState == .recording || currentState == .transcribing
                 || currentState == .cleaningUp
@@ -357,36 +341,26 @@ extension AppDelegate: PushToTalkManagerDelegate {
         }
 
         if currentState == .recording {
-            // Cancel recording - stop without proceeding to transcription
             Log.general.info("Cancelling recording")
             audioRecorder?.stopRecording { [weak self] result in
-                // Don't proceed to transcription regardless of result
                 self?.audioRecorder?.clearRecordingURL()
 
-                // Clean up any temporary files
                 if case .success(let url) = result {
                     try? FileManager.default.removeItem(at: url)
                     Log.general.debug("Cleaned up cancelled recording file")
                 }
             }
         } else if currentState == .transcribing {
-            // Cancel transcription
             Log.general.info("Cancelling transcription")
             TranscriptionService.shared.cancelCurrentTranscription()
-
-            // Clean up the recording file
             audioRecorder?.clearRecordingURL()
         } else if currentState == .cleaningUp {
-            // Cancel cleanup - the blocking FFI call will finish on its own
-            // but we won't use its result
             Log.general.info("Cancelling transcript cleanup")
             audioRecorder?.clearRecordingURL()
         }
 
-        // Transition state back to ready
         if stateMachine.requestCancellation() {
             Log.general.info("Successfully cancelled operation and returned to ready state")
-            // Reset toggle state in PushToTalkManager to ensure clean state
             pushToTalkManager?.resetToggleState()
         } else {
             Log.general.warning("Failed to transition state after cancellation")
@@ -416,38 +390,34 @@ extension AppDelegate {
             ClipboardManager.shared.paste(transcription: transcription)
             Log.general.debug("ClipboardManager.paste() call completed")
 
-            // Update the menu to show the new transcript in the history
             self?.setupMenu()
             Log.general.debug("Menu updated with new transcript in history")
         }
     }
 
     private func cleanupAndPaste(transcription: String) {
-        // Transition to cleaning up state
         DispatchQueue.main.async { [weak self] in
             _ = self?.stateMachine.process(.cleanupStarted)
         }
 
         guard let apiKey = SettingsManager.shared.getOpenAIKey() else {
             Log.general.error("No API key available for transcript cleanup")
-            // Fall back to using the raw transcription
             finishWithTranscription(transcription)
             return
         }
 
         Log.general.info(
-            "Transcript cleanup — original (\(transcription.count, privacy: .public) chars): \(transcription, privacy: .public)"
+            "Transcript cleanup - original (\(transcription.count, privacy: .public) chars): \(transcription, privacy: .public)"
         )
 
-        // Run cleanup on a background thread since it's a blocking FFI call
         Task.detached { [weak self] in
             if let cleaned = RustFFI.cleanupTranscript(text: transcription, apiKey: apiKey) {
                 let changed = transcription != cleaned
                 Log.general.info(
-                    "Transcript cleanup — cleaned (\(cleaned.count, privacy: .public) chars): \(cleaned, privacy: .public)"
+                    "Transcript cleanup - cleaned (\(cleaned.count, privacy: .public) chars): \(cleaned, privacy: .public)"
                 )
                 Log.general.info(
-                    "Transcript cleanup — changed: \(changed, privacy: .public)")
+                    "Transcript cleanup - changed: \(changed, privacy: .public)")
                 self?.finishWithCleanedTranscription(cleaned)
             } else {
                 Log.general.error(
@@ -455,7 +425,6 @@ extension AppDelegate {
                 DispatchQueue.main.async { [weak self] in
                     _ = self?.stateMachine.process(.cleanupFailed)
                 }
-                // Fall back to the raw transcription
                 self?.finishWithTranscription(transcription)
             }
         }
@@ -474,7 +443,6 @@ extension AppDelegate {
             ClipboardManager.shared.paste(transcription: transcription)
             Log.general.debug("ClipboardManager.paste() call completed")
 
-            // Update the menu to show the new transcript in the history
             self?.setupMenu()
             Log.general.debug("Menu updated with new transcript in history")
         }
@@ -484,6 +452,12 @@ extension AppDelegate {
         Log.general.debug(
             "AppDelegate.transcribeAudio() called with URL: \(url.path, privacy: .public)")
 
+        guard let ctx = whisperContext else {
+            Log.general.error("No Whisper context available for transcription")
+            _ = stateMachine.process(.transcriptionFailed, context: "Whisper model not loaded")
+            return
+        }
+
         if !self.stateMachine.process(.stopRecordingRequested) {
             Log.general.error("Failed to transition state to transcription")
             return
@@ -492,41 +466,26 @@ extension AppDelegate {
         Log.general.debug(
             "State successfully transitioned to transcription, calling TranscriptionService")
 
-        TranscriptionService.shared.transcribe(audioURL: url) { [weak self] result in
+        TranscriptionService.shared.transcribe(context: ctx, audioURL: url) { [weak self] result in
             Log.general.debug("TranscriptionService completed, processing result")
             switch result {
             case .success(let transcription):
                 Log.general.debug(
                     "Transcription successful, result: \(transcription, privacy: .public)")
 
-                // Check if transcript cleanup is enabled
                 if SettingsManager.shared.isTranscriptCleanupEnabled() {
                     self?.cleanupAndPaste(transcription: transcription)
                 } else {
                     self?.finishWithTranscription(transcription)
                 }
 
-                // Only clear recording URL after successful transcription
                 self?.audioRecorder?.clearRecordingURL()
 
             case .failure(let error):
                 Log.general.error(
-                    "Transcription request error: \(error.localizedDescription, privacy: .public)"
+                    "Transcription failed: \(error.localizedDescription, privacy: .public)"
                 )
-
-                // Check if this is a retryable error
-                let isRetryable = (error as? TranscriptionError)?.isRetryable ?? false
-
-                if isRetryable {
-                    Log.general.debug(
-                        "Transcription failed with retryable error, preserving audio file for potential retry"
-                    )
-                } else {
-                    Log.general.debug(
-                        "Transcription failed with non-retryable error, cleaning up audio file")
-                    // Only clear recording URL for non-retryable errors
-                    self?.audioRecorder?.clearRecordingURL()
-                }
+                self?.audioRecorder?.clearRecordingURL()
 
                 DispatchQueue.main.async { [weak self] in
                     _ = self?.stateMachine.process(

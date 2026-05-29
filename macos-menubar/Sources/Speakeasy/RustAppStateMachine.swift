@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Swift Enums (Mirror the Rust ones)
 enum RustAppState: UInt8, CaseIterable, CustomStringConvertible {
-    case needsApiKey = 0
+    case needsModel = 0
     case ready = 1
     case recording = 2
     case transcribing = 3
@@ -11,7 +11,7 @@ enum RustAppState: UInt8, CaseIterable, CustomStringConvertible {
     // UI Properties
     var displayText: String {
         switch self {
-        case .needsApiKey: return "API key required"
+        case .needsModel: return "Model required"
         case .ready: return "Ready"
         case .recording: return "Recording..."
         case .transcribing: return "Transcribing..."
@@ -21,7 +21,7 @@ enum RustAppState: UInt8, CaseIterable, CustomStringConvertible {
 
     var accessibilityDescription: String {
         switch self {
-        case .needsApiKey: return "OpenAI API key is required"
+        case .needsModel: return "Whisper model is required"
         case .ready: return "Ready to record"
         case .recording: return "Recording in progress"
         case .transcribing: return "Transcribing audio"
@@ -31,7 +31,7 @@ enum RustAppState: UInt8, CaseIterable, CustomStringConvertible {
 
     var icon: String {
         switch self {
-        case .needsApiKey: return "exclamationmark.triangle"
+        case .needsModel: return "exclamationmark.triangle"
         case .ready: return "mic"
         case .recording: return "record.circle"
         case .transcribing: return "waveform"
@@ -43,8 +43,8 @@ enum RustAppState: UInt8, CaseIterable, CustomStringConvertible {
 }
 
 enum RustAppEvent: UInt8, CaseIterable {
-    case apiKeyProvided = 0
-    case apiKeyRemoved = 1
+    case modelLoaded = 0
+    case modelRemoved = 1
     case startRecordingRequested = 2
     case stopRecordingRequested = 3
     case transcriptionCompleted = 4
@@ -64,7 +64,7 @@ class RustAppStateMachine {
             // Debug logging
             if currentState != oldValue {
                 Log.general.debug(
-                    "State transition: \(oldValue, privacy: .public) → \(self.currentState, privacy: .public)"
+                    "State transition: \(oldValue, privacy: .public) -> \(self.currentState, privacy: .public)"
                 )
             }
         }
@@ -77,7 +77,7 @@ class RustAppStateMachine {
     private(set) var lastError: String?
     private(set) var lastTranscription: String?
 
-    init(initialState: RustAppState = .needsApiKey) {
+    init(initialState: RustAppState = .needsModel) {
         self.currentState = initialState
     }
 
@@ -152,8 +152,8 @@ class RustAppStateMachine {
         guard !canStartRecording else { return nil }
 
         switch currentState {
-        case .needsApiKey:
-            return "Please add your OpenAI API key to use voice recording."
+        case .needsModel:
+            return "A Whisper model is required for voice recording."
         case .recording:
             return "Already recording."
         case .transcribing:
@@ -166,8 +166,8 @@ class RustAppStateMachine {
     }
 
     // MARK: - Convenience Methods for AppDelegate
-    func handleApiKeyChange(hasKey: Bool) {
-        let event: RustAppEvent = hasKey ? .apiKeyProvided : .apiKeyRemoved
+    func handleModelChange(hasModel: Bool) {
+        let event: RustAppEvent = hasModel ? .modelLoaded : .modelRemoved
         process(event)
     }
 
@@ -198,8 +198,8 @@ extension RustAppStateMachine {
 
     /// Call this in applicationDidFinishLaunching
     func initializeFromSettings() {
-        let hasApiKey = SettingsManager.shared.hasOpenAIKey()
-        handleApiKeyChange(hasKey: hasApiKey)
+        let hasModel = SettingsManager.shared.hasModel()
+        handleModelChange(hasModel: hasModel)
     }
 
     /// Call this from push-to-talk engage

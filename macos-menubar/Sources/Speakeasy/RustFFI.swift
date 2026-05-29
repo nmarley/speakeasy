@@ -4,7 +4,7 @@ import OSLog
 // Swift wrapper for Rust FFI functions
 struct RustFFI {
 
-    // Function declarations matching the C header
+    // State machine function declarations matching the C header
     @_silgen_name("state_machine_transition")
     private static func stateMachineTransition(_ currentState: UInt8, _ event: UInt8) -> UInt8
 
@@ -17,15 +17,23 @@ struct RustFFI {
     @_silgen_name("state_machine_needs_setup")
     private static func stateMachineNeedsSetup(_ state: UInt8) -> Bool
 
-    // Transcription function declarations
+    // Whisper context lifecycle
+    @_silgen_name("whisper_context_init")
+    private static func whisperContextInit(
+        _ modelPath: UnsafePointer<CChar>
+    ) -> OpaquePointer?
+
+    @_silgen_name("whisper_context_destroy")
+    private static func whisperContextDestroy(_ ctx: OpaquePointer)
+
+    // Local transcription via whisper.cpp
     @_silgen_name("transcribe_audio_blocking")
     private static func transcribeAudioBlocking(
-        _ audioFilePath: UnsafePointer<CChar>,
-        _ apiKey: UnsafePointer<CChar>,
-        _ timeoutThreshold: Double
+        _ ctx: OpaquePointer,
+        _ audioFilePath: UnsafePointer<CChar>
     ) -> UnsafeMutablePointer<CChar>?
 
-    // Transcript cleanup function declarations
+    // Transcript cleanup via OpenAI API
     @_silgen_name("cleanup_transcript_blocking")
     private static func cleanupTranscriptBlocking(
         _ transcript: UnsafePointer<CChar>,
@@ -52,21 +60,25 @@ struct RustFFI {
         return stateMachineNeedsSetup(state)
     }
 
-    // Public Swift interface for transcription
-    static func transcribeAudio(audioFilePath: String, apiKey: String, timeoutThreshold: Double)
-        -> String?
-    {
+    // Public Swift interface for Whisper context lifecycle
+    static func initWhisperContext(modelPath: String) -> OpaquePointer? {
+        return modelPath.withCString { pathPtr in
+            whisperContextInit(pathPtr)
+        }
+    }
+
+    static func destroyWhisperContext(_ ctx: OpaquePointer) {
+        whisperContextDestroy(ctx)
+    }
+
+    // Public Swift interface for local transcription
+    static func transcribeAudio(context: OpaquePointer, audioFilePath: String) -> String? {
         return audioFilePath.withCString { audioPathPtr in
-            apiKey.withCString { apiKeyPtr in
-                guard
-                    let resultPtr = transcribeAudioBlocking(
-                        audioPathPtr, apiKeyPtr, timeoutThreshold)
-                else {
-                    return nil
-                }
-                defer { freeRustString(resultPtr) }
-                return String(cString: resultPtr)
+            guard let resultPtr = transcribeAudioBlocking(context, audioPathPtr) else {
+                return nil
             }
+            defer { freeRustString(resultPtr) }
+            return String(cString: resultPtr)
         }
     }
 
