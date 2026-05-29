@@ -1,2 +1,6 @@
 /ignore
 .env
+
+# Whisper model files (downloaded at runtime)
+*.bin
+*.ggml

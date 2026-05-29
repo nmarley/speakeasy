@@ -1000,7 +1000,6 @@ dependencies = [
  "reqwest",
  "rustls",
  "serde",
- "serde_json",
  "whisper-rs",
 ]
 

@@ -2,6 +2,9 @@
 
 ## Prerequisites
 
+CMake must be installed (required by whisper-rs to compile whisper.cpp
+from source).
+
 The file `macos-menubar/.env` must contain:
 
     DEVELOPER_ID

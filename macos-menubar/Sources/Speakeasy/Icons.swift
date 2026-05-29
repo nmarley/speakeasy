@@ -5,10 +5,6 @@ enum AppIcons {
         return createCircleIcon(radius: 12, color: .systemGreen)
     }()
 
-    static let yellowStatusDot: NSImage = {
-        return createCircleIcon(radius: 12, color: .systemYellow)
-    }()
-
     static let redStatusDot: NSImage = {
         return createCircleIcon(radius: 12, color: .systemRed)
     }()
