@@ -1,7 +1,9 @@
 import AppKit
 
 @main
-class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate,
+    ModelManagementViewControllerDelegate
+{
     var statusItem: NSStatusItem?
     var pushToTalkManager: PushToTalkManager?
     var audioRecorder: AudioRecorder?
@@ -15,8 +17,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
     // Whisper model context (loaded once, held for app lifetime)
     private var whisperContext: OpaquePointer?
 
-    // API Key popover (for optional cleanup feature)
+    // Popovers
     var apiKeyPopover: NSPopover?
+    var modelPopover: NSPopover?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -55,6 +58,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
         // Check Accessibility permission for keyboard monitoring
         checkAccessibilityPermission()
+
+        // First-run: if no model is available, prompt to download
+        if stateMachine.needsSetup {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.showModelManagement(nil)
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -164,6 +174,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
         menu.addItem(NSMenuItem.separator())
 
+        // Model management
+        let modelTitle: String
+        if SettingsManager.shared.hasModel() {
+            modelTitle = "Model: \(SettingsManager.defaultModelName)"
+        } else if ModelDownloadService.shared.isDownloading {
+            modelTitle = "Downloading Model..."
+        } else {
+            modelTitle = "Download Model..."
+        }
+        let modelMenuItem = NSMenuItem(
+            title: modelTitle, action: #selector(showModelManagement(_:)),
+            keyEquivalent: "")
+        modelMenuItem.target = self
+        menu.addItem(modelMenuItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         // Transcript cleanup toggle
         let cleanupItem = NSMenuItem(
             title: "Clean Up Transcripts",
@@ -201,6 +228,46 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
         sender.state = newValue ? .on : .off
         Log.general.info(
             "Transcript cleanup toggled: \(newValue ? "on" : "off", privacy: .public)")
+    }
+
+    @objc func showModelManagement(_ sender: Any?) {
+        if let popover = modelPopover, popover.isShown {
+            popover.performClose(sender)
+        } else {
+            let modelVC = ModelManagementViewController(
+                hasModel: SettingsManager.shared.hasModel())
+            modelVC.delegate = self
+            let popover = NSPopover()
+            popover.contentViewController = modelVC
+            popover.behavior = .applicationDefined
+            modelPopover = popover
+
+            if let button = statusItem?.button {
+                popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            }
+        }
+    }
+
+    // MARK: - ModelManagementViewControllerDelegate
+
+    func modelDidFinishDownloading(modelPath: String) {
+        Log.general.info("Model download complete, loading Whisper context")
+        stateMachine.handleModelChange(hasModel: true)
+        loadWhisperModel()
+        refreshUI()
+    }
+
+    func modelManagementDidClose() {
+        modelPopover?.performClose(nil)
+    }
+
+    func modelDidDelete() {
+        if let ctx = whisperContext {
+            RustFFI.destroyWhisperContext(ctx)
+            whisperContext = nil
+        }
+        stateMachine.handleModelChange(hasModel: false)
+        refreshUI()
     }
 
     @objc func manageOpenAIKey(_ sender: Any?) {

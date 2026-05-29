@@ -9,13 +9,29 @@ class SettingsManager {
     // Application Support directory for Speakeasy
     let appDirectory: URL
 
+    // Models directory inside Application Support
+    var modelsDirectory: URL {
+        appDirectory.appendingPathComponent("models", isDirectory: true)
+    }
+
     // Default model path inside Application Support
     var defaultModelPath: String {
-        appDirectory
-            .appendingPathComponent("models", isDirectory: true)
+        modelsDirectory
             .appendingPathComponent("ggml-small.en.bin")
             .path
     }
+
+    // Human-readable name of the default model
+    static let defaultModelName = "small.en"
+
+    // Size of the default model (for display purposes)
+    static let defaultModelSize = "466 MB"
+
+    // Download URL for the default model
+    static let defaultModelURL = URL(
+        string:
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin"
+    )!
 
     private init() {
         let fileManager = FileManager.default
@@ -81,6 +97,15 @@ class SettingsManager {
         Log.general.debug("Stored model path: \(path, privacy: .public)")
     }
 
+    // Ensure the models directory exists, creating it if necessary.
+    func ensureModelsDirectoryExists() throws {
+        try FileManager.default.createDirectory(
+            at: modelsDirectory,
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+    }
+
     // Check whether the model file exists on disk at the configured path.
     func hasModel() -> Bool {
         let path = modelPath()
@@ -88,6 +113,25 @@ class SettingsManager {
         Log.general.debug(
             "Model check: path=\(path, privacy: .public) exists=\(exists, privacy: .public)")
         return exists
+    }
+
+    // Returns the file size of the model on disk, or nil if it does not exist.
+    func modelFileSize() -> Int64? {
+        let path = modelPath()
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+            let size = attrs[.size] as? Int64
+        else {
+            return nil
+        }
+        return size
+    }
+
+    // Delete the downloaded model file.
+    func deleteModel() throws {
+        let path = modelPath()
+        guard FileManager.default.fileExists(atPath: path) else { return }
+        try FileManager.default.removeItem(atPath: path)
+        Log.general.info("Deleted model at: \(path, privacy: .public)")
     }
 
     // MARK: - OpenAI API Key (optional, only needed for transcript cleanup)
