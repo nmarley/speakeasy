@@ -52,11 +52,11 @@ struct ChatChoiceMessage {
     content: String,
 }
 
-async fn cleanup_transcript(
+fn cleanup_transcript(
     transcript: &str,
     api_key: &str,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let client = reqwest::Client::new();
+) -> Result<String, Box<dyn std::error::Error>> {
+    let client = reqwest::blocking::Client::new();
 
     let request_body = ChatRequest {
         model: CLEANUP_MODEL.to_string(),
@@ -78,16 +78,15 @@ async fn cleanup_transcript(
         .header(CONTENT_TYPE, "application/json")
         .timeout(Duration::from_secs(CLEANUP_TIMEOUT_SECS))
         .json(&request_body)
-        .send()
-        .await?;
+        .send()?;
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = response.text().unwrap_or_default();
         return Err(format!("API error {}: {}", status, body).into());
     }
 
-    let chat_response: ChatResponse = response.json().await?;
+    let chat_response: ChatResponse = response.json()?;
 
     chat_response
         .choices
@@ -124,12 +123,7 @@ pub unsafe extern "C" fn cleanup_transcript_blocking(
         Err(_) => return std::ptr::null_mut(),
     };
 
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(_) => return std::ptr::null_mut(),
-    };
-
-    let result = rt.block_on(cleanup_transcript(transcript_str, api_key_str));
+    let result = cleanup_transcript(transcript_str, api_key_str);
 
     match result {
         Ok(text) => {
@@ -167,9 +161,9 @@ mod tests {
 
     /// Integration test that calls the real OpenAI API.
     /// Run with: OPENAI_API_KEY=sk-... cargo test test_cleanup_changes_messy_input -- --ignored
-    #[tokio::test]
+    #[test]
     #[ignore]
-    async fn test_cleanup_changes_messy_input() {
+    fn test_cleanup_changes_messy_input() {
         let api_key = std::env::var("OPENAI_API_KEY")
             .expect("OPENAI_API_KEY env var required for integration test");
 
@@ -179,7 +173,7 @@ mod tests {
                      the way we want through EKS and such they still have to go through \
                      Terraform you know";
 
-        let result = cleanup_transcript(input, &api_key).await.unwrap();
+        let result = cleanup_transcript(input, &api_key).unwrap();
 
         println!("Original ({} chars): {}", input.len(), input);
         println!("Cleaned  ({} chars): {}", result.len(), result);
