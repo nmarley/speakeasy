@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AppState {
-    NeedsApiKey = 0,
+    NeedsModel = 0,
     Ready = 1,
     Recording = 2,
     Transcribing = 3,
@@ -13,8 +13,8 @@ pub enum AppState {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AppEvent {
-    ApiKeyProvided = 0,
-    ApiKeyRemoved = 1,
+    ModelLoaded = 0,
+    ModelRemoved = 1,
     StartRecordingRequested = 2,
     StopRecordingRequested = 3,
     TranscriptionCompleted = 4,
@@ -29,12 +29,12 @@ pub enum AppEvent {
 impl From<u8> for AppState {
     fn from(value: u8) -> Self {
         match value {
-            0 => AppState::NeedsApiKey,
+            0 => AppState::NeedsModel,
             1 => AppState::Ready,
             2 => AppState::Recording,
             3 => AppState::Transcribing,
             4 => AppState::CleaningUp,
-            _ => AppState::NeedsApiKey, // Default fallback
+            _ => AppState::NeedsModel, // Default fallback
         }
     }
 }
@@ -42,8 +42,8 @@ impl From<u8> for AppState {
 impl From<u8> for AppEvent {
     fn from(value: u8) -> Self {
         match value {
-            0 => AppEvent::ApiKeyProvided,
-            1 => AppEvent::ApiKeyRemoved,
+            0 => AppEvent::ModelLoaded,
+            1 => AppEvent::ModelRemoved,
             2 => AppEvent::StartRecordingRequested,
             3 => AppEvent::StopRecordingRequested,
             4 => AppEvent::TranscriptionCompleted,
@@ -53,22 +53,21 @@ impl From<u8> for AppEvent {
             8 => AppEvent::CleanupStarted,
             9 => AppEvent::CleanupCompleted,
             10 => AppEvent::CleanupFailed,
-            _ => AppEvent::ApiKeyProvided, // Default fallback
+            _ => AppEvent::ModelLoaded, // Default fallback
         }
     }
 }
 
-// Core state transition logic
 fn transition(current_state: AppState, event: AppEvent) -> AppState {
     use AppEvent::*;
     use AppState::*;
 
     match (current_state, event) {
-        // API Key management
-        (NeedsApiKey, ApiKeyProvided) => Ready,
-        (Ready, ApiKeyRemoved) => NeedsApiKey,
+        // Model lifecycle
+        (NeedsModel, ModelLoaded) => Ready,
+        (Ready, ModelRemoved) => NeedsModel,
 
-        // Recording flow (only works with API key present = Ready state)
+        // Recording flow (only works when model is loaded)
         (Ready, StartRecordingRequested) => Recording,
         (Recording, StopRecordingRequested) => Transcribing,
         (Recording, NoAudioRecorded) => Ready,
@@ -80,20 +79,18 @@ fn transition(current_state: AppState, event: AppEvent) -> AppState {
         (CleaningUp, CleanupCompleted) => Ready,
         (CleaningUp, CleanupFailed) => Ready,
 
-        // Cancellation - return to ready from active states
+        // Cancellation
         (Recording, CancellationRequested) => Ready,
         (Transcribing, CancellationRequested) => Ready,
         (CleaningUp, CancellationRequested) => Ready,
 
-        // API key removed during active states - reset to needs setup
-        (Recording | Transcribing | CleaningUp, ApiKeyRemoved) => NeedsApiKey,
+        // Model removed during active states
+        (Recording | Transcribing | CleaningUp, ModelRemoved) => NeedsModel,
 
-        // All other transitions are invalid - no state change
         _ => current_state,
     }
 }
 
-// Query functions (pure, no side effects)
 fn can_start_recording(state: AppState) -> bool {
     matches!(state, AppState::Ready)
 }
@@ -106,22 +103,14 @@ fn is_busy(state: AppState) -> bool {
 }
 
 fn needs_setup(state: AppState) -> bool {
-    matches!(state, AppState::NeedsApiKey)
+    matches!(state, AppState::NeedsModel)
 }
 
-fn has_error(_state: AppState) -> bool {
-    // In API key mode, no persistent error states
-    // Errors are transient (handled by Swift layer)
-    false
-}
-
-// FFI Interface - Pure functions only, no callbacks!
 #[unsafe(no_mangle)]
 pub extern "C" fn state_machine_transition(current_state: u8, event: u8) -> u8 {
     let state = AppState::from(current_state);
     let evt = AppEvent::from(event);
-    let new_state = transition(state, evt);
-    new_state as u8
+    transition(state, evt) as u8
 }
 
 #[unsafe(no_mangle)]
@@ -140,17 +129,10 @@ pub extern "C" fn state_machine_needs_setup(state: u8) -> bool {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn state_machine_has_error(state: u8) -> bool {
-    has_error(AppState::from(state))
-}
-
-// Validation function for debugging
-#[unsafe(no_mangle)]
 pub extern "C" fn state_machine_is_valid_transition(current_state: u8, event: u8) -> bool {
     let state = AppState::from(current_state);
     let evt = AppEvent::from(event);
-    let new_state = transition(state, evt);
-    new_state != state
+    transition(state, evt) != state
 }
 
 #[cfg(test)]
@@ -159,26 +141,21 @@ mod tests {
 
     #[test]
     fn test_basic_flow() {
-        // Start with no API key
-        let mut state = AppState::NeedsApiKey;
+        let mut state = AppState::NeedsModel;
 
-        // Add API key
-        state = transition(state, AppEvent::ApiKeyProvided);
+        state = transition(state, AppEvent::ModelLoaded);
         assert_eq!(state, AppState::Ready);
         assert!(can_start_recording(state));
 
-        // Start recording
         state = transition(state, AppEvent::StartRecordingRequested);
         assert_eq!(state, AppState::Recording);
         assert!(!can_start_recording(state));
         assert!(is_busy(state));
 
-        // Stop recording
         state = transition(state, AppEvent::StopRecordingRequested);
         assert_eq!(state, AppState::Transcribing);
         assert!(is_busy(state));
 
-        // Complete transcription
         state = transition(state, AppEvent::TranscriptionCompleted);
         assert_eq!(state, AppState::Ready);
         assert!(can_start_recording(state));
@@ -187,91 +164,68 @@ mod tests {
 
     #[test]
     fn test_invalid_transitions() {
-        // Can't record without API key
-        let state = AppState::NeedsApiKey;
+        let state = AppState::NeedsModel;
         let new_state = transition(state, AppEvent::StartRecordingRequested);
-        assert_eq!(new_state, AppState::NeedsApiKey); // No change
+        assert_eq!(new_state, AppState::NeedsModel);
 
-        // Can't start recording while already recording
         let state = AppState::Recording;
         let new_state = transition(state, AppEvent::StartRecordingRequested);
-        assert_eq!(new_state, AppState::Recording); // No change
+        assert_eq!(new_state, AppState::Recording);
     }
 
     #[test]
-    fn test_api_key_only_flow() {
-        // Test the complete API-key-only flow
-        let mut state = AppState::NeedsApiKey;
+    fn test_model_lifecycle_flow() {
+        let mut state = AppState::NeedsModel;
 
-        // Can't do anything without API key
         assert!(!can_start_recording(state));
         assert!(needs_setup(state));
-        assert!(!has_error(state)); // No persistent error states
 
-        // Add API key - now ready
-        state = transition(state, AppEvent::ApiKeyProvided);
+        state = transition(state, AppEvent::ModelLoaded);
         assert_eq!(state, AppState::Ready);
         assert!(can_start_recording(state));
         assert!(!needs_setup(state));
 
-        // Full recording cycle
         state = transition(state, AppEvent::StartRecordingRequested);
         assert_eq!(state, AppState::Recording);
-        assert!(!can_start_recording(state));
-        assert!(is_busy(state));
-
         state = transition(state, AppEvent::StopRecordingRequested);
         assert_eq!(state, AppState::Transcribing);
-        assert!(!can_start_recording(state));
-        assert!(is_busy(state));
-
         state = transition(state, AppEvent::TranscriptionCompleted);
         assert_eq!(state, AppState::Ready);
-        assert!(can_start_recording(state));
-        assert!(!is_busy(state));
 
-        // Test transcription failure path
         state = transition(state, AppEvent::StartRecordingRequested);
         state = transition(state, AppEvent::StopRecordingRequested);
         state = transition(state, AppEvent::TranscriptionFailed);
-        assert_eq!(state, AppState::Ready); // Back to ready after failure
+        assert_eq!(state, AppState::Ready);
 
-        // Test no audio recorded path
         state = transition(state, AppEvent::StartRecordingRequested);
         state = transition(state, AppEvent::NoAudioRecorded);
-        assert_eq!(state, AppState::Ready); // Back to ready
+        assert_eq!(state, AppState::Ready);
 
-        // Remove API key - back to setup
-        state = transition(state, AppEvent::ApiKeyRemoved);
-        assert_eq!(state, AppState::NeedsApiKey);
+        state = transition(state, AppEvent::ModelRemoved);
+        assert_eq!(state, AppState::NeedsModel);
         assert!(!can_start_recording(state));
         assert!(needs_setup(state));
     }
 
     #[test]
-    fn test_api_key_removed_during_recording() {
-        // Test what happens if API key is removed while recording/transcribing
+    fn test_model_removed_during_recording() {
         let mut state = AppState::Ready;
 
-        // Start recording
         state = transition(state, AppEvent::StartRecordingRequested);
         assert_eq!(state, AppState::Recording);
 
-        // API key removed during recording
-        state = transition(state, AppEvent::ApiKeyRemoved);
-        assert_eq!(state, AppState::NeedsApiKey);
+        state = transition(state, AppEvent::ModelRemoved);
+        assert_eq!(state, AppState::NeedsModel);
 
-        // Similar test for transcribing
         state = AppState::Transcribing;
-        state = transition(state, AppEvent::ApiKeyRemoved);
-        assert_eq!(state, AppState::NeedsApiKey);
+        state = transition(state, AppEvent::ModelRemoved);
+        assert_eq!(state, AppState::NeedsModel);
     }
 
     #[test]
     fn test_ffi_interface() {
-        // Test the FFI functions work correctly
-        let state = AppState::NeedsApiKey as u8;
-        let event = AppEvent::ApiKeyProvided as u8;
+        let state = AppState::NeedsModel as u8;
+        let event = AppEvent::ModelLoaded as u8;
 
         let new_state = state_machine_transition(state, event);
         assert_eq!(new_state, AppState::Ready as u8);
@@ -284,7 +238,6 @@ mod tests {
 
     #[test]
     fn test_cleanup_flow() {
-        // Full flow with cleanup
         let mut state = AppState::Ready;
 
         state = transition(state, AppEvent::StartRecordingRequested);
@@ -293,12 +246,10 @@ mod tests {
         state = transition(state, AppEvent::StopRecordingRequested);
         assert_eq!(state, AppState::Transcribing);
 
-        // Transcription done, start cleanup
         state = transition(state, AppEvent::CleanupStarted);
         assert_eq!(state, AppState::CleaningUp);
         assert!(is_busy(state));
 
-        // Cleanup completes
         state = transition(state, AppEvent::CleanupCompleted);
         assert_eq!(state, AppState::Ready);
         assert!(!is_busy(state));
@@ -324,16 +275,15 @@ mod tests {
     }
 
     #[test]
-    fn test_cleanup_api_key_removed() {
+    fn test_cleanup_model_removed() {
         let mut state = AppState::CleaningUp;
 
-        state = transition(state, AppEvent::ApiKeyRemoved);
-        assert_eq!(state, AppState::NeedsApiKey);
+        state = transition(state, AppEvent::ModelRemoved);
+        assert_eq!(state, AppState::NeedsModel);
     }
 
     #[test]
     fn test_cleanup_only_from_transcribing() {
-        // CleanupStarted should be a no-op from non-Transcribing states
         let state = AppState::Ready;
         assert_eq!(transition(state, AppEvent::CleanupStarted), AppState::Ready);
 
@@ -343,29 +293,26 @@ mod tests {
             AppState::Recording
         );
 
-        let state = AppState::NeedsApiKey;
+        let state = AppState::NeedsModel;
         assert_eq!(
             transition(state, AppEvent::CleanupStarted),
-            AppState::NeedsApiKey
+            AppState::NeedsModel
         );
     }
 
     #[test]
     fn test_cancellation_transitions() {
-        // Test cancellation from recording state
         let state = AppState::Recording;
         let new_state = transition(state, AppEvent::CancellationRequested);
         assert_eq!(new_state, AppState::Ready);
 
-        // Test cancellation from transcribing state
         let state = AppState::Transcribing;
         let new_state = transition(state, AppEvent::CancellationRequested);
         assert_eq!(new_state, AppState::Ready);
 
-        // Test cancellation from other states (should not change state)
-        let state = AppState::NeedsApiKey;
+        let state = AppState::NeedsModel;
         let new_state = transition(state, AppEvent::CancellationRequested);
-        assert_eq!(new_state, AppState::NeedsApiKey);
+        assert_eq!(new_state, AppState::NeedsModel);
 
         let state = AppState::Ready;
         let new_state = transition(state, AppEvent::CancellationRequested);

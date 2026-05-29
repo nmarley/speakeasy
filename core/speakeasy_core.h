@@ -9,19 +9,17 @@
 extern "C" {
 #endif
 
-// App states
 typedef enum {
-    APP_STATE_NEEDS_API_KEY = 0,
+    APP_STATE_NEEDS_MODEL = 0,
     APP_STATE_READY = 1,
     APP_STATE_RECORDING = 2,
     APP_STATE_TRANSCRIBING = 3,
     APP_STATE_CLEANING_UP = 4
 } AppState;
 
-// App events
 typedef enum {
-    APP_EVENT_API_KEY_PROVIDED = 0,
-    APP_EVENT_API_KEY_REMOVED = 1,
+    APP_EVENT_MODEL_LOADED = 0,
+    APP_EVENT_MODEL_REMOVED = 1,
     APP_EVENT_START_RECORDING_REQUESTED = 2,
     APP_EVENT_STOP_RECORDING_REQUESTED = 3,
     APP_EVENT_TRANSCRIPTION_COMPLETED = 4,
@@ -33,20 +31,24 @@ typedef enum {
     APP_EVENT_CLEANUP_FAILED = 10
 } AppEvent;
 
-// State machine functions
+// State machine
 uint8_t state_machine_transition(uint8_t current_state, uint8_t event);
 bool state_machine_can_start_recording(uint8_t state);
 bool state_machine_is_busy(uint8_t state);
 bool state_machine_needs_setup(uint8_t state);
 
-// Audio transcription functions
+// Whisper context lifecycle
+typedef struct WhisperContext WhisperContext;
+WhisperContext* whisper_context_init(const char* model_path);
+void whisper_context_destroy(WhisperContext* ctx);
+
+// Audio transcription (local via whisper.cpp)
 char* transcribe_audio_blocking(
-    const char* audio_file_path,
-    const char* api_key,
-    double timeout_threshold
+    const WhisperContext* ctx,
+    const char* audio_file_path
 );
 
-// Transcript cleanup functions
+// Transcript cleanup (remote via OpenAI API)
 char* cleanup_transcript_blocking(
     const char* transcript,
     const char* api_key

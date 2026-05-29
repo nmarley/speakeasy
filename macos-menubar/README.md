@@ -1,7 +1,7 @@
 # Speakeasy macOS Menu Bar App
 
-Swift/AppKit menu bar application. Uses the Rust core library for audio
-transcription via the OpenAI Whisper API.
+Swift/AppKit menu bar application. Uses the Rust core library for local
+audio transcription via whisper.cpp with Metal GPU acceleration.
 
 ## Prerequisites
 

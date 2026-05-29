@@ -31,7 +31,12 @@ let package = Package(
                 .unsafeFlags(
                     [
                         "../core/target/release/libspeakeasy_core.a"
-                    ], .when(platforms: [.macOS]))
+                    ], .when(platforms: [.macOS])),
+                .linkedFramework("Accelerate"),
+                .linkedFramework("Metal"),
+                .linkedFramework("MetalKit"),
+                .linkedFramework("MetalPerformanceShaders"),
+                .linkedLibrary("c++"),
             ]
         )
         // .testTarget(

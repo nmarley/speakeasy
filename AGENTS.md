@@ -1,17 +1,17 @@
 # Speakeasy
 
-macOS menu bar app that converts speech to text using OpenAI's Whisper
-API. Press a hotkey, speak, and transcribed text is pasted into the
-active text field.
+macOS menu bar app that converts speech to text using local Whisper
+inference via whisper.cpp with Metal GPU acceleration. Press a hotkey,
+speak, and transcribed text is pasted into the active text field.
 
 ## Architecture
 
 The project has two components:
 
 - **`core/`** -- Rust static library handling audio capture and
-  transcription via the Whisper API. Builds as a universal static lib
-  (arm64 + x86_64) linked by the Swift app through a C header
-  (`speakeasy_core.h`).
+  transcription via whisper.cpp (whisper-rs bindings with Metal GPU
+  acceleration). Builds as a universal static lib (arm64 + x86_64)
+  linked by the Swift app through a C header (`speakeasy_core.h`).
 
 - **`macos-menubar/`** -- Swift + AppKit menu bar application built
   with Swift Package Manager. Links against
