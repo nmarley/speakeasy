@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 @main
 class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate,
@@ -214,6 +215,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
         menu.addItem(NSMenuItem.separator())
 
+        // Launch at Login toggle
+        let launchAtLoginItem = NSMenuItem(
+            title: "Launch at Login",
+            action: #selector(toggleLaunchAtLogin(_:)),
+            keyEquivalent: ""
+        )
+        launchAtLoginItem.target = self
+        launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(launchAtLoginItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         menu.addItem(
             NSMenuItem(
                 title: "Quit Speakeasy", action: #selector(NSApplication.terminate(_:)),
@@ -228,6 +241,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
         sender.state = newValue ? .on : .off
         Log.general.info(
             "Transcript cleanup toggled: \(newValue ? "on" : "off", privacy: .public)")
+    }
+
+    @objc func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+                sender.state = .off
+                Log.general.info("Launch at login disabled")
+            } else {
+                try SMAppService.mainApp.register()
+                sender.state = .on
+                Log.general.info("Launch at login enabled")
+            }
+        } catch {
+            Log.general.error(
+                "Failed to toggle launch at login: \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     @objc func showModelManagement(_ sender: Any?) {
