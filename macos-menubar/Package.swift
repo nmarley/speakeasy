@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "Speakeasy",
     platforms: [
-        .macOS(.v12)
+        .macOS(.v13)
     ],
     dependencies: [
         // Dependencies declare other packages that this package depends on.
