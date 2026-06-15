@@ -215,14 +215,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
 
         menu.addItem(NSMenuItem.separator())
 
-        // Launch at Login toggle
+        // Launch at Login toggle (only available when running from an app bundle)
         let launchAtLoginItem = NSMenuItem(
             title: "Launch at Login",
             action: #selector(toggleLaunchAtLogin(_:)),
             keyEquivalent: ""
         )
         launchAtLoginItem.target = self
-        launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        if isRunningFromAppBundle {
+            launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        } else {
+            launchAtLoginItem.isEnabled = false
+            launchAtLoginItem.state = .off
+        }
         menu.addItem(launchAtLoginItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -243,7 +248,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
             "Transcript cleanup toggled: \(newValue ? "on" : "off", privacy: .public)")
     }
 
+    /// Whether the app is running from a proper .app bundle. When running a
+    /// bare executable (e.g. a debug build via `swift run`), registering a
+    /// login item would register the raw binary instead of the bundle,
+    /// causing macOS to route permissions through Terminal at next login.
+    private var isRunningFromAppBundle: Bool {
+        Bundle.main.bundlePath.hasSuffix(".app")
+    }
+
     @objc func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        guard isRunningFromAppBundle else {
+            Log.general.warning(
+                "Launch at login is only available when running from an app bundle"
+            )
+            return
+        }
+
         do {
             if SMAppService.mainApp.status == .enabled {
                 try SMAppService.mainApp.unregister()
