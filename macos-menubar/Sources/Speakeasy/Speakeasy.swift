@@ -507,6 +507,12 @@ extension AppDelegate {
         }
     }
 
+    private func processCleanupFailedOnMain() {
+        DispatchQueue.main.async { [weak self] in
+            _ = self?.stateMachine.process(.cleanupFailed)
+        }
+    }
+
     private func cleanupAndPaste(transcription: String) {
         DispatchQueue.main.async { [weak self] in
             _ = self?.stateMachine.process(.cleanupStarted)
@@ -533,9 +539,7 @@ extension AppDelegate {
                 Log.general.error(
                     "Cleanup model failed to load, falling back to original transcription"
                 )
-                DispatchQueue.main.async { [weak self] in
-                    _ = self?.stateMachine.process(.cleanupFailed)
-                }
+                self?.processCleanupFailedOnMain()
                 self?.finishWithTranscription(transcription)
                 return
             }
@@ -551,9 +555,7 @@ extension AppDelegate {
                 Log.general.info(
                     "Transcript cleanup returned unchanged text, using original"
                 )
-                DispatchQueue.main.async { [weak self] in
-                    _ = self?.stateMachine.process(.cleanupFailed)
-                }
+                self?.processCleanupFailedOnMain()
                 self?.finishWithTranscription(transcription)
             }
         }
