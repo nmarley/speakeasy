@@ -4,10 +4,11 @@ Speakeasy is a lightweight macOS menu bar app that converts speech to text
 in near real-time. Press a hotkey, speak, and your words are transcribed
 and inserted directly into whatever text field you're working in.
 
-Transcription runs entirely on-device using whisper.cpp with Metal GPU
-acceleration on Apple Silicon. No API key is required for transcription.
-An optional transcript cleanup feature (punctuation and capitalization
-via GPT-4.1-nano) is available for users who provide an OpenAI API key.
+Both transcription and transcript cleanup run entirely on-device.
+Transcription uses whisper.cpp with Metal GPU acceleration on Apple
+Silicon. Transcript cleanup (punctuation and capitalization) runs via
+MLX Swift (Gemma 3 1B QAT 4-bit) on the Metal GPU. No API keys are
+required, no data leaves your Mac.
 
 ## Design Goals
 
@@ -17,9 +18,8 @@ via GPT-4.1-nano) is available for users who provide an OpenAI API key.
   (press to start/stop), each with configurable global hotkeys
 - **Instant text insertion** -- transcribed text is automatically pasted
   into the active text field via macOS accessibility APIs
-- **Fully local transcription** -- runs Whisper inference on-device via
-  Metal GPU acceleration; no data leaves your Mac unless you opt in to
-  the transcript cleanup feature
+- **Fully local** -- both transcription and cleanup run on-device via
+  Metal GPU acceleration; no data leaves your Mac
 
 ## Repository Structure
 
