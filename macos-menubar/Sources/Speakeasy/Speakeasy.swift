@@ -10,6 +10,11 @@ class AppDelegate: NSObject, NSApplicationDelegate,
     var audioRecorder: AudioRecorder?
     var statusMenuItem: NSMenuItem?
 
+    // Watches for macOS Secure Input, which blocks the hotkey from outside the
+    // app. Non-nil holder means the hotkey is currently blocked.
+    private let secureInputMonitor = SecureInputMonitor()
+    private var secureInputHolder: SecureInputHolder?
+
     // State machine to manage app status
     private let stateMachine = RustAppStateMachine()
 
@@ -51,6 +56,9 @@ class AppDelegate: NSObject, NSApplicationDelegate,
         pushToTalkManager = PushToTalkManager()
         pushToTalkManager?.delegate = self
         audioRecorder = AudioRecorder()
+
+        secureInputMonitor.delegate = self
+        secureInputMonitor.start()
 
         setupStateMachineListener()
 
@@ -130,6 +138,27 @@ class AppDelegate: NSObject, NSApplicationDelegate,
     func setupMenu() {
         let menu = NSMenu()
         let status = self.stateMachine.currentState
+
+        // Surface a Secure Input block at the very top of the menu so it is the
+        // first thing the user sees when the hotkey appears dead.
+        if let holder = secureInputHolder {
+            let blockedItem = NSMenuItem(
+                title: "Hotkey blocked by Secure Input (\(holder.displayName))",
+                action: nil, keyEquivalent: "")
+            blockedItem.image = NSImage(
+                systemSymbolName: "exclamationmark.triangle.fill",
+                accessibilityDescription: nil)
+            blockedItem.isEnabled = false
+            menu.addItem(blockedItem)
+
+            let helpItem = NSMenuItem(
+                title: "Why isn't the hotkey working?",
+                action: #selector(showSecureInputHelp(_:)), keyEquivalent: "")
+            helpItem.target = self
+            menu.addItem(helpItem)
+
+            menu.addItem(NSMenuItem.separator())
+        }
 
         statusMenuItem = NSMenuItem(title: status.displayText, action: nil, keyEquivalent: "")
         statusMenuItem?.image = status == .ready ? AppIcons.greenStatusDot : AppIcons.redStatusDot
@@ -378,13 +407,66 @@ class AppDelegate: NSObject, NSApplicationDelegate,
         let state = stateMachine.currentState
 
         if let statusButton = statusItem?.button {
-            statusButton.image = NSImage(
-                systemSymbolName: state.icon,
-                accessibilityDescription: state.accessibilityDescription
-            )
+            // When Secure Input is blocking the hotkey, override the normal
+            // state icon with a warning so the menu bar reflects that the app
+            // cannot receive the hotkey through no fault of its own.
+            if let holder = secureInputHolder {
+                statusButton.image = NSImage(
+                    systemSymbolName: "exclamationmark.triangle.fill",
+                    accessibilityDescription: "Hotkey blocked by Secure Input"
+                )
+                statusButton.toolTip =
+                    "Hotkey blocked: Secure Input is active (held by \(holder.displayName))"
+            } else {
+                statusButton.image = NSImage(
+                    systemSymbolName: state.icon,
+                    accessibilityDescription: state.accessibilityDescription
+                )
+                statusButton.toolTip = nil
+            }
         }
 
         setupMenu()
+    }
+}
+
+extension AppDelegate: SecureInputMonitorDelegate {
+    func secureInputDidEngage(holder: SecureInputHolder) {
+        secureInputHolder = holder
+        refreshUI()
+    }
+
+    func secureInputDidDisengage() {
+        secureInputHolder = nil
+        refreshUI()
+    }
+
+    // Opens a short explanation of why the hotkey is blocked and how to clear
+    // Secure Input. Shown only from the menu item, never as an unsolicited
+    // alert, to keep the app unintrusive.
+    @objc func showSecureInputHelp(_ sender: Any?) {
+        let holderText =
+            secureInputHolder.map { holder in
+                holder.isStale
+                    ? "It is held by \(holder.displayName), which appears to have quit without releasing it."
+                    : "It is currently held by \(holder.displayName)."
+            } ?? "It is currently active."
+
+        let alert = NSAlert()
+        alert.messageText = "Hotkey Blocked by Secure Input"
+        alert.informativeText =
+            """
+            macOS "Secure Input" is active, which prevents all apps (including \
+            Speakeasy) from receiving global keyboard shortcuts. \(holderText)
+
+            This is a macOS security feature, not a problem with Speakeasy. \
+            Quitting the app that turned it on usually clears it. If it persists \
+            (for example, the app crashed while it was on), logging out and back \
+            in will reset it.
+            """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 }
 
