@@ -36,7 +36,9 @@ prompt is shown.
    silent failure that looks like an app bug.
 3. Remove the startup ordering fragility so granting Accessibility does not
    require a manual restart.
-4. Mitigate the trigger in the local Ghostty environment.
+4. Mitigating the trigger in the local Ghostty environment is handled
+   outside this repo via Ghostty configuration and is not part of the app
+   work.
 
 ## Reference: how Espanso detects Secure Input
 
@@ -51,6 +53,18 @@ extracts the app name. It polls on a background thread with an adaptive
 interval (3s idle, 1s while active) and edge-detects on the PID so it only
 reacts on transitions. The result drives a distinct "system disabled" tray
 icon plus extra context-menu items.
+
+## The stale holder case
+
+Secure Input is reference-counted per login session. If a process enables it
+and then dies abnormally without the matching disable call, the session
+counter never decrements and the holder PID is left pointing at a process
+that no longer exists. This is the common real-world failure (observed here
+with both a force-killed Ghostty and, ultimately, 1Password). When the holder
+PID refers to a dead process, both `NSRunningApplication(processIdentifier:)`
+and `proc_pidpath` fail to resolve a name. Detection must treat this as a
+first-class case and report the holder as stale, advising the user that
+logging out clears it, rather than presenting a misleading or empty app name.
 
 ## Stages
 
@@ -85,14 +99,9 @@ Stage 3: Menu bar UI surfacing
       warning icon and set a tooltip naming the holding app; restore the
       normal icon on `secureInputDidDisengage`.
   3c: When Secure Input is active, insert menu items at the top of the menu:
-      a disabled status line ("Hotkey blocked by Secure Input (<App>)") and a
-      "Why isn't this working?" item that opens a short explanation.
-
-Stage 4: Ghostty environment mitigation (local config, outside the repo)
-  4a: Set `macos-auto-secure-input = false` in the Ghostty config to stop the
-      heuristic from enabling Secure Input automatically.
-  4b: Set `macos-secure-input-indication = true` so any future Secure Input
-      activation is visibly indicated.
+      a disabled status line ("Hotkey blocked by Secure Input (<App>)", or a
+      stale-holder variant when the PID is gone) and a "Why isn't this
+      working?" item that opens a short explanation.
 
 ## Out of scope
 
