@@ -15,6 +15,7 @@ class PushToTalkManager {
     private let pushToTalkKey: UInt16 = 49
 
     private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
     private var isEngaged = false
     private var isSpaceDown = false
     private var currentModifiers: NSEvent.ModifierFlags = []
@@ -24,18 +25,36 @@ class PushToTalkManager {
 
     private var cancelKey: Int = 8  // 8 is the keycode for 'C'
 
+    // macOS can silently disable an active event tap (slow callback, or while
+    // Secure Input is held by another process). A periodic watchdog re-enables
+    // a disabled tap and recreates one that never came up, so the hotkey heals
+    // itself instead of staying dead until the app is restarted.
+    private var watchdogTimer: Timer?
+    private let watchdogInterval: TimeInterval = 2.0
+
+    // The permission alert is shown at most once so the watchdog's repeated
+    // recreation attempts cannot spam the user with dialogs.
+    private var hasShownPermissionAlert = false
+
     init() {
         // Start a CGEvent tap that intercepts key events so we can suppress unwanted space events.
         startEventTap()
+        startWatchdog()
     }
 
     deinit {
-        if let eventTap = eventTap {
-            CFMachPortInvalidate(eventTap)
-        }
+        watchdogTimer?.invalidate()
+        teardownEventTap()
     }
 
-    private func startEventTap() {
+    // Creates the event tap and wires it into the current run loop. Safe to
+    // call repeatedly: an existing tap is torn down first so the watchdog can
+    // recreate a tap that failed to come up (for example, after Accessibility
+    // permission is granted without restarting the app).
+    @discardableResult
+    private func startEventTap() -> Bool {
+        teardownEventTap()
+
         let mask =
             (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.keyUp.rawValue)
@@ -52,33 +71,92 @@ class PushToTalkManager {
             },
             userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         )
-        if let eventTap = eventTap {
-            let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
-            CGEvent.tapEnable(tap: eventTap, enable: true)
-        } else {
+        guard let eventTap = eventTap else {
             Log.general.error(
                 "Failed to create event tap - Accessibility permission may not be granted")
+            showPermissionAlertOnce()
+            return false
+        }
 
-            // Show alert to user on main thread
-            DispatchQueue.main.async {
-                let alert = NSAlert()
-                alert.messageText = "Keyboard Monitoring Unavailable"
-                alert.informativeText =
-                    "Failed to create keyboard event monitor. Please ensure Speakeasy has Accessibility permission in System Settings > Privacy & Security > Accessibility."
-                alert.alertStyle = .critical
-                alert.addButton(withTitle: "Open System Settings")
-                alert.addButton(withTitle: "OK")
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+        CGEvent.tapEnable(tap: eventTap, enable: true)
+        runLoopSource = source
+        Log.general.info("Event tap created and enabled")
+        return true
+    }
 
-                let response = alert.runModal()
-                if response == .alertFirstButtonReturn {
-                    if let url = URL(
-                        string:
-                            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-                    ) {
-                        NSWorkspace.shared.open(url)
-                    }
+    // Removes the current tap from the run loop and invalidates it, leaving the
+    // manager ready to create a fresh tap.
+    private func teardownEventTap() {
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            runLoopSource = nil
+        }
+        if let eventTap = eventTap {
+            CFMachPortInvalidate(eventTap)
+            self.eventTap = nil
+        }
+    }
+
+    private func showPermissionAlertOnce() {
+        guard !hasShownPermissionAlert else { return }
+        hasShownPermissionAlert = true
+
+        // Show alert to user on main thread
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "Keyboard Monitoring Unavailable"
+            alert.informativeText =
+                "Failed to create keyboard event monitor. Please ensure Speakeasy has Accessibility permission in System Settings > Privacy & Security > Accessibility."
+            alert.alertStyle = .critical
+            alert.addButton(withTitle: "Open System Settings")
+            alert.addButton(withTitle: "OK")
+
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                if let url = URL(
+                    string:
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                ) {
+                    NSWorkspace.shared.open(url)
                 }
+            }
+        }
+    }
+
+    // MARK: - Watchdog
+
+    private func startWatchdog() {
+        let timer = Timer.scheduledTimer(
+            withTimeInterval: watchdogInterval, repeats: true
+        ) { [weak self] _ in
+            self?.checkTapHealth()
+        }
+        // Keep the watchdog firing during menu tracking and other run loop modes.
+        RunLoop.current.add(timer, forMode: .common)
+        watchdogTimer = timer
+    }
+
+    // Re-enables a tap that macOS disabled, or recreates one that never came
+    // up. Note this cannot recover from Secure Input being held by another
+    // process: the tap stays enabled but receives no events until the holder
+    // releases it. That case is surfaced separately by SecureInputMonitor.
+    private func checkTapHealth() {
+        guard let eventTap = eventTap else {
+            Log.general.error("Event tap missing; attempting to recreate")
+            startEventTap()
+            return
+        }
+
+        if !CGEvent.tapIsEnabled(tap: eventTap) {
+            Log.general.error("Event tap was disabled by the system; re-enabling")
+            CGEvent.tapEnable(tap: eventTap, enable: true)
+
+            // If re-enabling did not take, rebuild the tap from scratch.
+            if !CGEvent.tapIsEnabled(tap: eventTap) {
+                Log.general.error("Re-enable failed; recreating event tap")
+                startEventTap()
             }
         }
     }
@@ -93,6 +171,17 @@ class PushToTalkManager {
         }
 
         switch type {
+        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            // macOS disabled the tap (a slow callback, or user-input timeout).
+            // Re-enable immediately so the hotkey does not silently die; the
+            // watchdog is a slower backstop for this same condition.
+            Log.general.error(
+                "Event tap disabled by system (type: \(type.rawValue, privacy: .public)); re-enabling"
+            )
+            if let eventTap = eventTap {
+                CGEvent.tapEnable(tap: eventTap, enable: true)
+            }
+            return Unmanaged.passRetained(event)
         case .keyDown:
             if event.getIntegerValueField(.keyboardEventKeycode) == Int64(pushToTalkKey) {
                 isSpaceDown = true
