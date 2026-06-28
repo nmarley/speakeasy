@@ -407,21 +407,25 @@ class AppDelegate: NSObject, NSApplicationDelegate,
         let state = stateMachine.currentState
 
         if let statusButton = statusItem?.button {
-            // When Secure Input is blocking the hotkey, override the normal
-            // state icon with a warning so the menu bar reflects that the app
-            // cannot receive the hotkey through no fault of its own.
+            // Always render the normal state icon, falling back to a
+            // programmatic dot if the SF Symbol cannot be resolved. The status
+            // item uses variableLength, so a nil image would collapse it to
+            // zero width and make the app vanish from the menu bar entirely.
+            statusButton.image =
+                NSImage(
+                    systemSymbolName: state.icon,
+                    accessibilityDescription: state.accessibilityDescription
+                ) ?? AppIcons.redStatusDot
+
+            // Signal a Secure Input block by tinting the existing icon rather
+            // than swapping the glyph, so the menu-bar item can never disappear.
+            // The detail lives in the tooltip and the top-of-menu items.
             if let holder = secureInputHolder {
-                statusButton.image = NSImage(
-                    systemSymbolName: "exclamationmark.triangle.fill",
-                    accessibilityDescription: "Hotkey blocked by Secure Input"
-                )
+                statusButton.contentTintColor = .systemYellow
                 statusButton.toolTip =
                     "Hotkey blocked: Secure Input is active (held by \(holder.displayName))"
             } else {
-                statusButton.image = NSImage(
-                    systemSymbolName: state.icon,
-                    accessibilityDescription: state.accessibilityDescription
-                )
+                statusButton.contentTintColor = nil
                 statusButton.toolTip = nil
             }
         }
