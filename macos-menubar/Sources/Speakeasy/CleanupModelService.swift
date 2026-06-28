@@ -1,5 +1,6 @@
 import Foundation
 import HuggingFace
+import MLX
 import MLXHuggingFace
 import MLXLLM
 import MLXLMCommon
@@ -93,6 +94,12 @@ class CleanupModelService {
 
         do {
             Log.general.info("Loading cleanup model via MLX...")
+
+            // Install the Swift error handler before any MLX GPU
+            // initialization. Without this, MLX's default C error
+            // handler calls exit(-1) on any failure (e.g. missing
+            // metallib), crashing the app with no recovery path.
+            _ = MLXArray(0)
 
             let container = try await #huggingFaceLoadModelContainer(
                 configuration: LLMRegistry.gemma3_1B_qat_4bit
