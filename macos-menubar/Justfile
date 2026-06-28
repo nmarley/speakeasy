@@ -30,10 +30,10 @@ build: _check-rust-lib format
 run: format
     swift run
 
-# Build for release (universal binary)
+# Build for release (arm64 only -- MLX requires Apple Silicon)
 [group: 'release steps']
 build-release: _check-rust-lib
-    swift build -c release --arch arm64 --arch x86_64
+    swift build -c release --arch arm64
 
 # Create release app bundle
 [group: 'release steps']
@@ -43,7 +43,7 @@ bundle: build-release
     mkdir -p {{ APP_BUNDLE }}/Contents/Resources
     cp {{ INFO_PLIST }} {{ APP_BUNDLE }}/Contents/Info.plist
     cp Sources/{{ APP_NAME }}/Resources/AppIcon.icns {{ APP_BUNDLE }}/Contents/Resources
-    cp .build/apple/Products/Release/{{ APP_NAME }} {{ APP_BUNDLE }}/Contents/MacOS/{{ APP_NAME }}
+    cp .build/arm64-apple-macosx/release/{{ APP_NAME }} {{ APP_BUNDLE }}/Contents/MacOS/{{ APP_NAME }}
     @echo "Created release bundle {{ APP_BUNDLE }} using {{ INFO_PLIST }}"
 
 # Create debug app bundle
