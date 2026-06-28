@@ -33,13 +33,6 @@ struct RustFFI {
         _ audioFilePath: UnsafePointer<CChar>
     ) -> UnsafeMutablePointer<CChar>?
 
-    // Transcript cleanup via OpenAI API
-    @_silgen_name("cleanup_transcript_blocking")
-    private static func cleanupTranscriptBlocking(
-        _ transcript: UnsafePointer<CChar>,
-        _ apiKey: UnsafePointer<CChar>
-    ) -> UnsafeMutablePointer<CChar>?
-
     @_silgen_name("free_rust_string")
     private static func freeRustString(_ ptr: UnsafeMutablePointer<CChar>)
 
@@ -79,19 +72,6 @@ struct RustFFI {
             }
             defer { freeRustString(resultPtr) }
             return String(cString: resultPtr)
-        }
-    }
-
-    // Public Swift interface for transcript cleanup
-    static func cleanupTranscript(text: String, apiKey: String) -> String? {
-        return text.withCString { textPtr in
-            apiKey.withCString { apiKeyPtr in
-                guard let resultPtr = cleanupTranscriptBlocking(textPtr, apiKeyPtr) else {
-                    return nil
-                }
-                defer { freeRustString(resultPtr) }
-                return String(cString: resultPtr)
-            }
         }
     }
 }

@@ -48,12 +48,6 @@ char* transcribe_audio_blocking(
     const char* audio_file_path
 );
 
-// Transcript cleanup (remote via OpenAI API)
-char* cleanup_transcript_blocking(
-    const char* transcript,
-    const char* api_key
-);
-
 void free_rust_string(char* ptr);
 
 #ifdef __cplusplus

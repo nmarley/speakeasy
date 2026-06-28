@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 
 @main
-class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate,
+class AppDelegate: NSObject, NSApplicationDelegate,
     ModelManagementViewControllerDelegate
 {
     var statusItem: NSStatusItem?
@@ -19,7 +19,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
     private var whisperContext: OpaquePointer?
 
     // Popovers
-    var apiKeyPopover: NSPopover?
     var modelPopover: NSPopover?
     var cleanupModelPopover: NSPopover?
 
@@ -203,16 +202,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
         cleanupItem.state = SettingsManager.shared.isTranscriptCleanupEnabled() ? .on : .off
         menu.addItem(cleanupItem)
 
-        // OpenAI API key management (only needed for cleanup feature)
-        let apiKeyTitle =
-            SettingsManager.shared.hasOpenAIKey()
-            ? "Manage OpenAI API Key..." : "Add OpenAI API Key..."
-        let apiKeyMenuItem = NSMenuItem(
-            title: apiKeyTitle, action: #selector(manageOpenAIKey(_:)),
+        // Cleanup model management
+        let cleanupModelTitle: String
+        if CleanupModelService.shared.hasModel() {
+            cleanupModelTitle = "Cleanup Model: \(CleanupModelService.modelName)"
+        } else if CleanupModelService.shared.isDownloading {
+            cleanupModelTitle = "Downloading Cleanup Model..."
+        } else {
+            cleanupModelTitle = "Download Cleanup Model..."
+        }
+        let cleanupModelMenuItem = NSMenuItem(
+            title: cleanupModelTitle, action: #selector(showCleanupModelManagement(_:)),
             keyEquivalent: "")
-        apiKeyMenuItem.target = self
-        apiKeyMenuItem.isEnabled = true
-        menu.addItem(apiKeyMenuItem)
+        cleanupModelMenuItem.target = self
+        menu.addItem(cleanupModelMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -322,39 +325,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
         refreshUI()
     }
 
-    @objc func manageOpenAIKey(_ sender: Any?) {
-        if let popover = apiKeyPopover, popover.isShown {
-            popover.performClose(sender)
-        } else {
-            let apiKeyVC = APIKeyViewController()
-            apiKeyVC.delegate = self
-            let popover = NSPopover()
-            popover.contentViewController = apiKeyVC
-            popover.behavior = .applicationDefined
-            apiKeyPopover = popover
-
-            if let button = statusItem?.button {
-                popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            }
-        }
-    }
-
-    // MARK: - APIKeyViewControllerDelegate
-
-    func apiKeyDidSave(key: String) {
-        SettingsManager.shared.storeOpenAIKey(key)
-        refreshUI()
-        apiKeyPopover?.performClose(nil)
-        Log.general.debug("OpenAI API key saved (used for transcript cleanup)")
-    }
-
-    func apiKeyDidCancel() {
-        apiKeyPopover?.performClose(nil)
-    }
-
     // MARK: - Cleanup Model Management
 
-    func showCleanupModelManagement(_ sender: Any?) {
+    @objc func showCleanupModelManagement(_ sender: Any?) {
         if let popover = cleanupModelPopover, popover.isShown {
             popover.performClose(sender)
         } else {
