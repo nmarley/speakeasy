@@ -164,7 +164,13 @@ class SettingsManager {
 
     func isTranscriptCleanupEnabled() -> Bool {
         let settings = loadSettings() ?? [:]
-        return settings["transcript_cleanup_enabled"] as? Bool ?? false
+        // Default to true now that cleanup runs locally via MLX.
+        // The setting key may be absent on first launch or after
+        // upgrading from an older version that defaulted to false.
+        if let value = settings["transcript_cleanup_enabled"] as? Bool {
+            return value
+        }
+        return true
     }
 
     func setTranscriptCleanupEnabled(_ enabled: Bool) {

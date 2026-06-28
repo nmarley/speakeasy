@@ -21,6 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
     // Popovers
     var apiKeyPopover: NSPopover?
     var modelPopover: NSPopover?
+    var cleanupModelPopover: NSPopover?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -351,6 +352,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
         apiKeyPopover?.performClose(nil)
     }
 
+    // MARK: - Cleanup Model Management
+
+    func showCleanupModelManagement(_ sender: Any?) {
+        if let popover = cleanupModelPopover, popover.isShown {
+            popover.performClose(sender)
+        } else {
+            let cleanupVC = CleanupModelViewController(
+                hasModel: CleanupModelService.shared.hasModel())
+            cleanupVC.delegate = self
+            let popover = NSPopover()
+            popover.contentViewController = cleanupVC
+            popover.behavior = .applicationDefined
+            cleanupModelPopover = popover
+
+            if let button = statusItem?.button {
+                popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            }
+        }
+    }
+
     static func main() {
         let app = NSApplication.shared
         // Explicitly set activation policy to .accessory to ensure event taps
@@ -518,28 +539,45 @@ extension AppDelegate {
             _ = self?.stateMachine.process(.cleanupStarted)
         }
 
-        guard let apiKey = SettingsManager.shared.getOpenAIKey() else {
-            Log.general.error("No API key available for transcript cleanup")
+        // If the cleanup model is not downloaded yet, show the download
+        // popover so the user can get it. Fall back to raw transcript.
+        if !CleanupModelService.shared.hasModel() {
+            Log.general.info(
+                "Cleanup model not downloaded, showing download popover")
+            DispatchQueue.main.async { [weak self] in
+                self?.showCleanupModelManagement(nil)
+            }
             finishWithTranscription(transcription)
             return
         }
 
-        Log.general.info(
-            "Transcript cleanup - original (\(transcription.count, privacy: .public) chars): \(transcription, privacy: .public)"
-        )
-
+        // Ensure the model is loaded before attempting inference.
+        // downloadAndLoad is a no-op if already loaded.
         Task.detached { [weak self] in
-            if let cleaned = RustFFI.cleanupTranscript(text: transcription, apiKey: apiKey) {
-                let changed = transcription != cleaned
+            await CleanupModelService.shared.downloadAndLoad()
+
+            if !CleanupModelService.shared.isLoaded {
+                Log.general.error(
+                    "Cleanup model failed to load, falling back to original transcription"
+                )
+                DispatchQueue.main.async { [weak self] in
+                    _ = self?.stateMachine.process(.cleanupFailed)
+                }
+                self?.finishWithTranscription(transcription)
+                return
+            }
+
+            let cleaned = await CleanupModelService.shared.cleanupTranscript(transcription)
+
+            if cleaned != transcription {
                 Log.general.info(
                     "Transcript cleanup - cleaned (\(cleaned.count, privacy: .public) chars): \(cleaned, privacy: .public)"
                 )
-                Log.general.info(
-                    "Transcript cleanup - changed: \(changed, privacy: .public)")
                 self?.finishWithCleanedTranscription(cleaned)
             } else {
-                Log.general.error(
-                    "Transcript cleanup failed, falling back to original transcription")
+                Log.general.info(
+                    "Transcript cleanup returned unchanged text, using original"
+                )
                 DispatchQueue.main.async { [weak self] in
                     _ = self?.stateMachine.process(.cleanupFailed)
                 }
@@ -611,5 +649,21 @@ extension AppDelegate {
                 }
             }
         }
+    }
+}
+
+extension AppDelegate: CleanupModelViewControllerDelegate {
+    func cleanupModelDidFinishDownloading() {
+        Log.general.info("Cleanup model downloaded and loaded successfully")
+        refreshUI()
+    }
+
+    func cleanupModelManagementDidClose() {
+        cleanupModelPopover?.performClose(nil)
+    }
+
+    func cleanupModelDidDelete() {
+        Log.general.info("Cleanup model deleted")
+        refreshUI()
     }
 }
