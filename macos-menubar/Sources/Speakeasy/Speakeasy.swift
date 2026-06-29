@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 
 @main
-class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate,
+class AppDelegate: NSObject, NSApplicationDelegate,
     ModelManagementViewControllerDelegate
 {
     var statusItem: NSStatusItem?
@@ -19,8 +19,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
     private var whisperContext: OpaquePointer?
 
     // Popovers
-    var apiKeyPopover: NSPopover?
     var modelPopover: NSPopover?
+    var cleanupModelPopover: NSPopover?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -202,16 +202,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
         cleanupItem.state = SettingsManager.shared.isTranscriptCleanupEnabled() ? .on : .off
         menu.addItem(cleanupItem)
 
-        // OpenAI API key management (only needed for cleanup feature)
-        let apiKeyTitle =
-            SettingsManager.shared.hasOpenAIKey()
-            ? "Manage OpenAI API Key..." : "Add OpenAI API Key..."
-        let apiKeyMenuItem = NSMenuItem(
-            title: apiKeyTitle, action: #selector(manageOpenAIKey(_:)),
+        // Cleanup model management
+        let cleanupModelTitle: String
+        if CleanupModelService.shared.hasModel() {
+            cleanupModelTitle = "Cleanup Model: \(CleanupModelService.modelName)"
+        } else if CleanupModelService.shared.isDownloading {
+            cleanupModelTitle = "Downloading Cleanup Model..."
+        } else {
+            cleanupModelTitle = "Download Cleanup Model..."
+        }
+        let cleanupModelMenuItem = NSMenuItem(
+            title: cleanupModelTitle, action: #selector(showCleanupModelManagement(_:)),
             keyEquivalent: "")
-        apiKeyMenuItem.target = self
-        apiKeyMenuItem.isEnabled = true
-        menu.addItem(apiKeyMenuItem)
+        cleanupModelMenuItem.target = self
+        menu.addItem(cleanupModelMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -321,34 +325,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, APIKeyViewControllerDelegate
         refreshUI()
     }
 
-    @objc func manageOpenAIKey(_ sender: Any?) {
-        if let popover = apiKeyPopover, popover.isShown {
+    // MARK: - Cleanup Model Management
+
+    @objc func showCleanupModelManagement(_ sender: Any?) {
+        if let popover = cleanupModelPopover, popover.isShown {
             popover.performClose(sender)
         } else {
-            let apiKeyVC = APIKeyViewController()
-            apiKeyVC.delegate = self
+            let cleanupVC = CleanupModelViewController(
+                hasModel: CleanupModelService.shared.hasModel())
+            cleanupVC.delegate = self
             let popover = NSPopover()
-            popover.contentViewController = apiKeyVC
+            popover.contentViewController = cleanupVC
             popover.behavior = .applicationDefined
-            apiKeyPopover = popover
+            cleanupModelPopover = popover
 
             if let button = statusItem?.button {
                 popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             }
         }
-    }
-
-    // MARK: - APIKeyViewControllerDelegate
-
-    func apiKeyDidSave(key: String) {
-        SettingsManager.shared.storeOpenAIKey(key)
-        refreshUI()
-        apiKeyPopover?.performClose(nil)
-        Log.general.debug("OpenAI API key saved (used for transcript cleanup)")
-    }
-
-    func apiKeyDidCancel() {
-        apiKeyPopover?.performClose(nil)
     }
 
     static func main() {
@@ -513,36 +507,55 @@ extension AppDelegate {
         }
     }
 
+    private func processCleanupFailedOnMain() {
+        DispatchQueue.main.async { [weak self] in
+            _ = self?.stateMachine.process(.cleanupFailed)
+        }
+    }
+
     private func cleanupAndPaste(transcription: String) {
         DispatchQueue.main.async { [weak self] in
             _ = self?.stateMachine.process(.cleanupStarted)
         }
 
-        guard let apiKey = SettingsManager.shared.getOpenAIKey() else {
-            Log.general.error("No API key available for transcript cleanup")
+        // If the cleanup model is not downloaded yet, show the download
+        // popover so the user can get it. Fall back to raw transcript.
+        if !CleanupModelService.shared.hasModel() {
+            Log.general.info(
+                "Cleanup model not downloaded, showing download popover")
+            DispatchQueue.main.async { [weak self] in
+                self?.showCleanupModelManagement(nil)
+            }
             finishWithTranscription(transcription)
             return
         }
 
-        Log.general.info(
-            "Transcript cleanup - original (\(transcription.count, privacy: .public) chars): \(transcription, privacy: .public)"
-        )
-
+        // Ensure the model is loaded before attempting inference.
+        // downloadAndLoad is a no-op if already loaded.
         Task.detached { [weak self] in
-            if let cleaned = RustFFI.cleanupTranscript(text: transcription, apiKey: apiKey) {
-                let changed = transcription != cleaned
+            await CleanupModelService.shared.downloadAndLoad()
+
+            if !CleanupModelService.shared.isLoaded {
+                Log.general.error(
+                    "Cleanup model failed to load, falling back to original transcription"
+                )
+                self?.processCleanupFailedOnMain()
+                self?.finishWithTranscription(transcription)
+                return
+            }
+
+            let cleaned = await CleanupModelService.shared.cleanupTranscript(transcription)
+
+            if cleaned != transcription {
                 Log.general.info(
                     "Transcript cleanup - cleaned (\(cleaned.count, privacy: .public) chars): \(cleaned, privacy: .public)"
                 )
-                Log.general.info(
-                    "Transcript cleanup - changed: \(changed, privacy: .public)")
                 self?.finishWithCleanedTranscription(cleaned)
             } else {
-                Log.general.error(
-                    "Transcript cleanup failed, falling back to original transcription")
-                DispatchQueue.main.async { [weak self] in
-                    _ = self?.stateMachine.process(.cleanupFailed)
-                }
+                Log.general.info(
+                    "Transcript cleanup returned unchanged text, using original"
+                )
+                self?.processCleanupFailedOnMain()
                 self?.finishWithTranscription(transcription)
             }
         }
@@ -611,5 +624,21 @@ extension AppDelegate {
                 }
             }
         }
+    }
+}
+
+extension AppDelegate: CleanupModelViewControllerDelegate {
+    func cleanupModelDidFinishDownloading() {
+        Log.general.info("Cleanup model downloaded and loaded successfully")
+        refreshUI()
+    }
+
+    func cleanupModelManagementDidClose() {
+        cleanupModelPopover?.performClose(nil)
+    }
+
+    func cleanupModelDidDelete() {
+        Log.general.info("Cleanup model deleted")
+        refreshUI()
     }
 }

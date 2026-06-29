@@ -16,15 +16,12 @@ check:
 test:
     cargo test
 
-# Build universal static library (arm64 + x86_64)
+# Build static library (arm64 only -- MLX requires Apple Silicon)
 build:
-    cargo build --release --target x86_64-apple-darwin
     cargo build --release --target aarch64-apple-darwin
     mkdir -pv target/release
-    lipo -create \
-        target/x86_64-apple-darwin/release/libspeakeasy_core.a \
-        target/aarch64-apple-darwin/release/libspeakeasy_core.a \
-        -output target/release/libspeakeasy_core.a
+    cp target/aarch64-apple-darwin/release/libspeakeasy_core.a \
+        target/release/libspeakeasy_core.a
 
 # Clean build artifacts
 clean:

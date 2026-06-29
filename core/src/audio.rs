@@ -152,8 +152,7 @@ pub unsafe extern "C" fn transcribe_audio_blocking(
 /// # Safety
 ///
 /// `ptr` must be either null or a valid pointer returned by
-/// `transcribe_audio_blocking` or `cleanup_transcript_blocking`.
-/// It must not have been freed previously.
+/// `transcribe_audio_blocking`. It must not have been freed previously.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn free_rust_string(ptr: *mut c_char) {
     if !ptr.is_null() {

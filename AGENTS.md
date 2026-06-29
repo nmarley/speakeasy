@@ -10,19 +10,22 @@ The project has two components:
 
 - **`core/`** -- Rust static library handling audio capture and
   transcription via whisper.cpp (whisper-rs bindings with Metal GPU
-  acceleration). Builds as a universal static lib (arm64 + x86_64)
-  linked by the Swift app through a C header (`speakeasy_core.h`).
+  acceleration). Builds as an arm64-only static lib linked by the
+  Swift app through a C header (`speakeasy_core.h`).
 
 - **`macos-menubar/`** -- Swift + AppKit menu bar application built
   with Swift Package Manager. Links against
-  `core/target/release/libspeakeasy_core.a`.
+  `core/target/release/libspeakeasy_core.a`. Transcript cleanup runs
+  locally via MLX Swift (Gemma 3 1B QAT 4-bit) on the Metal GPU, no
+  network calls required.
 
 ## Build Chain
 
-The Rust library must be built before the Swift app:
+The Rust library must be built before the Swift app. Both build
+arm64-only (MLX requires Apple Silicon):
 
 ```sh
-cd core && just build            # universal static lib
+cd core && just build            # arm64 static lib
 cd macos-menubar && just build   # Swift debug build (checks for lib)
 ```
 
@@ -37,7 +40,7 @@ All commands use `just` (justfile runner).
 
 ### Core (`core/`)
 
-- `just build` -- universal static lib (arm64 + x86_64)
+- `just build` -- arm64 static lib
 - `just check` -- cargo check
 - `just test` -- cargo test
 - `just fmt` -- cargo fmt
@@ -46,7 +49,7 @@ All commands use `just` (justfile runner).
 
 - `just build` -- debug build (runs swift-format first)
 - `just run` -- debug run
-- `just build-release` -- universal release binary
+- `just build-release` -- arm64 release binary
 - `just bundle` -- create .app bundle
 - `just codesign` -- codesign release bundle
 - `just build-dmg` -- create DMG installer

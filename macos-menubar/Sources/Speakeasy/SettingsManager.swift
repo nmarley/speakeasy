@@ -134,37 +134,17 @@ class SettingsManager {
         Log.general.info("Deleted model at: \(path, privacy: .public)")
     }
 
-    // MARK: - OpenAI API Key (optional, only needed for transcript cleanup)
-
-    func getOpenAIKey() -> String? {
-        let settings = loadSettings() ?? [:]
-        return settings["openai_api_key"] as? String
-    }
-
-    func storeOpenAIKey(_ key: String) {
-        var settings = loadSettings() ?? [:]
-        settings["openai_api_key"] = key
-        saveSettings(settings)
-        Log.general.debug("Stored OpenAI API key")
-    }
-
-    func hasOpenAIKey() -> Bool {
-        guard let key = getOpenAIKey() else { return false }
-        return !key.isEmpty
-    }
-
-    func clearOpenAIKey() {
-        var settings = loadSettings() ?? [:]
-        settings["openai_api_key"] = nil
-        saveSettings(settings)
-        Log.general.debug("Cleared OpenAI API key")
-    }
-
     // MARK: - Transcript Cleanup
 
     func isTranscriptCleanupEnabled() -> Bool {
         let settings = loadSettings() ?? [:]
-        return settings["transcript_cleanup_enabled"] as? Bool ?? false
+        // Default to true now that cleanup runs locally via MLX.
+        // The setting key may be absent on first launch or after
+        // upgrading from an older version that defaulted to false.
+        if let value = settings["transcript_cleanup_enabled"] as? Bool {
+            return value
+        }
+        return true
     }
 
     func setTranscriptCleanupEnabled(_ enabled: Bool) {
