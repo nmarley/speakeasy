@@ -80,9 +80,14 @@ bundle: build-release
     cp build/default.metallib {{ APP_BUNDLE }}/Contents/MacOS/Resources/default.metallib
     @echo "Created release bundle {{ APP_BUNDLE }} using {{ INFO_PLIST }}"
 
-# Create debug app bundle
+# Codesigned with the Developer ID identity so the bundle's designated
+# requirement is stable across rebuilds. Without a stable identity the
+# ad-hoc cdhash changes every build, invalidating the macOS Accessibility
+# grant and breaking keyboard monitoring.
+#
+# Create signed debug app bundle
 [group: 'debug']
-bundle-debug: build build-metallib
+bundle-debug: _check-env build build-metallib
     rm -fr {{ APP_BUNDLE }}/
     mkdir -p {{ APP_BUNDLE }}/Contents/MacOS
     mkdir -p {{ APP_BUNDLE }}/Contents/MacOS/Resources
@@ -91,7 +96,10 @@ bundle-debug: build build-metallib
     cp Sources/{{ APP_NAME }}/Resources/AppIcon.icns {{ APP_BUNDLE }}/Contents/Resources
     cp .build/debug/{{ APP_NAME }} {{ APP_BUNDLE }}/Contents/MacOS/{{ APP_NAME }}
     cp build/default.metallib {{ APP_BUNDLE }}/Contents/MacOS/Resources/default.metallib
-    @echo "Created debug bundle {{ APP_BUNDLE }} using {{ INFO_PLIST }}"
+    codesign --deep --force --options=runtime --verbose \
+        --entitlements assets/entitlements.xml \
+        --sign "$DEVELOPER_ID" {{ APP_BUNDLE }}
+    @echo "Created signed debug bundle {{ APP_BUNDLE }} using {{ INFO_PLIST }}"
 
 # Codesign the release bundle
 [group: 'release steps']
