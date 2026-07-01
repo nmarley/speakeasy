@@ -176,21 +176,19 @@ class CleanupModelService {
         do {
             let result = try await session.respond(to: userMessage)
 
-            let trimmed = result.trimmingCharacters(
-                in: .whitespacesAndNewlines
-            )
+            let sanitized = Self.sanitizeOutput(result)
 
-            if trimmed.isEmpty {
+            if sanitized.isEmpty {
                 Log.general.error(
-                    "Cleanup model returned empty result, returning original transcript"
+                    "Cleanup model returned empty result after sanitization, returning original transcript"
                 )
                 return transcript
             }
 
             Log.general.info(
-                "Transcript cleanup completed: \(transcript.count, privacy: .public) chars in, \(trimmed.count, privacy: .public) chars out"
+                "Transcript cleanup completed: \(transcript.count, privacy: .public) chars in, \(sanitized.count, privacy: .public) chars out"
             )
-            return trimmed
+            return sanitized
         } catch {
             Log.general.error(
                 "Transcript cleanup failed: \(error.localizedDescription, privacy: .public)"
@@ -237,6 +235,80 @@ class CleanupModelService {
     }
 
     // MARK: - Private
+
+    /// Preamble patterns the model may emit before the actual transcript.
+    /// Matched case-insensitively against the start of lines.
+    private static let preamblePatterns: [String] = [
+        "okay, let's",
+        "let's analyze",
+        "here's the cleaned transcript",
+        "here is the cleaned transcript",
+        "here's the corrected transcript",
+        "here is the corrected transcript",
+        "here's the transcript",
+        "here is the transcript",
+        "sure,",
+        "certainly,",
+        "of course,",
+        "i'll clean",
+        "i will clean",
+        "the cleaned transcript",
+        "the corrected transcript",
+    ]
+
+    /// Sanitize raw model output by stripping conversational preamble,
+    /// surrounding quotes, and echoed transcript tags. Returns the
+    /// cleaned text, or an empty string if nothing remains.
+    static func sanitizeOutput(_ output: String) -> String {
+        var text = output.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+
+        // Strip <transcript> / </transcript> tags if the model
+        // echoed them back.
+        text = text.replacingOccurrences(of: "<transcript>", with: "")
+        text = text.replacingOccurrences(of: "</transcript>", with: "")
+
+        // Strip leading preamble lines the model may emit before
+        // the actual transcript (e.g., "Okay, let's analyze the
+        // transcript and refine it.\n\nHere's the cleaned
+        // transcript:\n\n..."). Fall back to the next non-empty
+        // line after removing a preamble line.
+        let lines = text.components(separatedBy: .newlines)
+        var remaining = lines
+        while let first = remaining.first {
+            let trimmed = first.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            if trimmed.isEmpty {
+                remaining.removeFirst()
+                continue
+            }
+            let lowercased = trimmed.lowercased()
+            if preamblePatterns.contains(where: { lowercased.hasPrefix($0) }) {
+                remaining.removeFirst()
+                continue
+            }
+            break
+        }
+        text = remaining.joined(separator: "\n")
+
+        // Strip surrounding quotes if the entire output is wrapped
+        // in a single pair of single or double quotes.
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.count >= 2 {
+            let first = text.first!
+            let last = text.last!
+            if (first == "\"" && last == "\"")
+                || (first == "'" && last == "'")
+            {
+                text = String(text.dropFirst().dropLast())
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
+        return text
+    }
 
     private func huggingFaceCacheDirectory() -> URL {
         let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
