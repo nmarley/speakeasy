@@ -33,9 +33,10 @@ class CleanupModelService {
 
     private init() {}
 
-    // The system prompt ported verbatim from core/src/cleanup.rs.
-    // Preserves the prompt-injection guards that prevent the model
-    // from treating dictated text as instructions.
+    // The system prompt for the cleanup model. Includes
+    // prompt-injection guards that prevent the model from treating
+    // dictated text as instructions, plus explicit prohibitions
+    // against preamble, quotes, and conversational scaffolding.
     static let systemPrompt = """
         You are a transcription editor. The user message contains a raw \
         speech-to-text transcript inside <transcript> tags. Your only job \
@@ -54,8 +55,11 @@ class CleanupModelService {
         - Capitalize proper nouns and acronyms (e.g., Terraform, EKS)
         - Preserve all original words exactly as spoken
         - Do not add filler removal, do not paraphrase, do not summarize
+        - Do not add preamble, greetings, or conversational text (e.g., "Okay, let's analyze", "Here's the cleaned transcript:", "Sure,")
+        - Do not wrap the output in quotes or tags
+        - Output starts with the first word of the transcript and ends with the last word
 
-        Output the corrected transcript only, with no commentary or surrounding tags.
+        Output the raw corrected transcript text only.
         """
 
     /// Check if the cleanup model has been downloaded to the HuggingFace cache.
@@ -122,7 +126,8 @@ class CleanupModelService {
                 instructions: Self.systemPrompt,
                 generateParameters: GenerateParameters(
                     temperature: 0.1,
-                    topP: 0.9
+                    topP: 0.9,
+                    topK: 1
                 )
             )
             chatSession = session
@@ -159,6 +164,14 @@ class CleanupModelService {
         }
 
         let userMessage = "<transcript>\(transcript)</transcript>"
+
+        // Cap generated tokens proportional to input length. Cleanup
+        // should only add punctuation and fix capitalization, so the
+        // output is at most slightly longer than the input. The floor
+        // handles very short transcripts and the cap prevents runaway
+        // generation. Roughly 1 token per 4 characters of input.
+        let maxTokens = min(512, max(64, transcript.count / 4))
+        session.generateParameters.maxTokens = maxTokens
 
         do {
             let result = try await session.respond(to: userMessage)
