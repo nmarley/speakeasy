@@ -29,7 +29,6 @@ class CleanupModelService {
     private(set) var isLoaded = false
 
     private var modelContainer: ModelContainer?
-    private var chatSession: ChatSession?
 
     private init() {}
 
@@ -120,17 +119,6 @@ class CleanupModelService {
 
             isDownloading = false
             modelContainer = container
-
-            let session = ChatSession(
-                container,
-                instructions: Self.systemPrompt,
-                generateParameters: GenerateParameters(
-                    temperature: 0.1,
-                    topP: 0.9,
-                    topK: 1
-                )
-            )
-            chatSession = session
             isLoaded = true
 
             Log.general.info("Cleanup model loaded successfully")
@@ -158,7 +146,7 @@ class CleanupModelService {
     /// fails for any reason (model not loaded, inference error, etc.).
     /// This matches the fallback behavior of the former OpenAI path.
     func cleanupTranscript(_ transcript: String) async -> String {
-        guard isLoaded, let session = chatSession else {
+        guard isLoaded, let container = modelContainer else {
             Log.general.error("Cleanup model not loaded, returning original transcript")
             return transcript
         }
@@ -171,61 +159,51 @@ class CleanupModelService {
         // handles very short transcripts and the cap prevents runaway
         // generation. Roughly 1 token per 4 characters of input.
         let maxTokens = min(512, max(64, transcript.count / 4))
-        session.generateParameters.maxTokens = maxTokens
 
-        let maxAttempts = 2
+        // Build a fresh, isolated session for every cleanup. Reusing a
+        // single long-lived session let its KV cache accumulate prior
+        // transcripts and responses, so identical input could clean
+        // differently depending on history. Constructing the session
+        // per call from the cached container guarantees a clean context
+        // each time. Greedy decode (temperature 0) makes each cleanup
+        // deterministic and reproducible.
+        let session = ChatSession(
+            container,
+            instructions: Self.systemPrompt,
+            generateParameters: GenerateParameters(
+                maxTokens: maxTokens,
+                temperature: 0
+            )
+        )
 
-        for attempt in 1...maxAttempts {
-            do {
-                let result = try await session.respond(to: userMessage)
+        do {
+            let result = try await session.respond(to: userMessage)
 
-                let sanitized = Self.sanitizeOutput(result)
+            let sanitized = Self.sanitizeOutput(result)
 
-                if let rejectionReason = Self.validateCleanup(
-                    input: transcript, output: sanitized
-                ) {
-                    Log.general.warning(
-                        "Cleanup attempt \(attempt, privacy: .public) rejected: \(rejectionReason, privacy: .public)"
-                    )
-
-                    if attempt < maxAttempts {
-                        // Reset the KV cache to prevent the bad
-                        // response from polluting the retry context.
-                        // System instructions are preserved.
-                        await session.clear()
-                        continue
-                    }
-
-                    Log.general.error(
-                        "Cleanup model output rejected after \(maxAttempts, privacy: .public) attempts, returning original transcript"
-                    )
-                    return transcript
-                }
-
-                Log.general.info(
-                    "Transcript cleanup completed: \(transcript.count, privacy: .public) chars in, \(sanitized.count, privacy: .public) chars out (attempt \(attempt, privacy: .public))"
-                )
-                return sanitized
-            } catch {
+            if let rejectionReason = Self.validateCleanup(
+                input: transcript, output: sanitized
+            ) {
                 Log.general.error(
-                    "Cleanup attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
+                    "Cleanup model output rejected (\(rejectionReason, privacy: .public)), returning original transcript"
                 )
-
-                if attempt < maxAttempts {
-                    await session.clear()
-                    continue
-                }
-
                 return transcript
             }
-        }
 
-        return transcript
+            Log.general.info(
+                "Transcript cleanup completed: \(transcript.count, privacy: .public) chars in, \(sanitized.count, privacy: .public) chars out"
+            )
+            return sanitized
+        } catch {
+            Log.general.error(
+                "Cleanup failed: \(error.localizedDescription, privacy: .public), returning original transcript"
+            )
+            return transcript
+        }
     }
 
-    /// Unload the model from memory and clear the chat session.
+    /// Unload the model from memory.
     func unload() {
-        chatSession = nil
         modelContainer = nil
         isLoaded = false
         Log.general.info("Cleanup model unloaded")
