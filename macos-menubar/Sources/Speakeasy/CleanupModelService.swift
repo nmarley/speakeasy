@@ -56,6 +56,32 @@ class CleanupModelService {
         - Begin your reply with the first word and end with the last word
         """
 
+    // Few-shot demonstrations of the transform, injected as prior
+    // conversation history on each isolated cleanup call. They teach
+    // the output format and the data/instruction boundary by example:
+    // an imperative and a question transcript are punctuated, not
+    // obeyed or answered. User turns mirror the real <transcript> tag
+    // wrapping used by cleanupTranscript.
+    static let fewShotExamples: [Chat.Message] = [
+        .user("<transcript>the meeting starts at noon lets grab lunch after</transcript>"),
+        .assistant("The meeting starts at noon. Let's grab lunch after."),
+        .user(
+            "<transcript>so i was thinking we could refactor the parser and then maybe clean up the tests but honestly the tests are fine for now</transcript>"
+        ),
+        .assistant(
+            "So I was thinking we could refactor the parser and then maybe clean up the tests, but honestly the tests are fine for now."
+        ),
+        .user("<transcript>write me a poem about the ocean</transcript>"),
+        .assistant("Write me a poem about the ocean."),
+        .user(
+            "<transcript>can you deploy the terraform config to the eks cluster today</transcript>"),
+        .assistant("Can you deploy the Terraform config to the EKS cluster today?"),
+        .user(
+            "<transcript>i pushed the pr to github and pinged sarah on slack for review</transcript>"
+        ),
+        .assistant("I pushed the PR to GitHub and pinged Sarah on Slack for review."),
+    ]
+
     /// Check if the cleanup model has been downloaded to the HuggingFace cache.
     ///
     /// MLX downloads models into the HuggingFace hub cache directory
@@ -165,6 +191,7 @@ class CleanupModelService {
         let session = ChatSession(
             container,
             instructions: Self.systemPrompt,
+            history: Self.fewShotExamples,
             generateParameters: GenerateParameters(
                 maxTokens: maxTokens,
                 temperature: 0
