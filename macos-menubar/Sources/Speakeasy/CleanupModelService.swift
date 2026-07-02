@@ -14,16 +14,16 @@ protocol CleanupModelServiceDelegate: AnyObject {
 
 /// Manages the local LLM used for transcript cleanup.
 ///
-/// Downloads, loads, and runs a Gemma 3 1B QAT 4-bit model via MLX
-/// on the Metal GPU. The model stays resident in memory after first
+/// Downloads, loads, and runs a Qwen2.5 1.5B Instruct 4-bit model via
+/// MLX on the Metal GPU. The model stays resident in memory after first
 /// load for fast subsequent cleanup calls.
 class CleanupModelService {
     static let shared = CleanupModelService()
 
     weak var delegate: CleanupModelServiceDelegate?
 
-    static let modelName = "Gemma 3 1B"
-    static let modelSize = "600 MB"
+    static let modelName = "Qwen2.5 1.5B"
+    static let modelSize = "~1 GB"
 
     private(set) var isDownloading = false
     private(set) var isLoaded = false
@@ -68,7 +68,7 @@ class CleanupModelService {
     /// We check for the model's snapshot directory to determine if a
     /// download has completed.
     func hasModel() -> Bool {
-        let modelId = LLMRegistry.gemma3_1B_qat_4bit.name
+        let modelId = LLMRegistry.qwen2_5_1_5b.name
         let cacheDir = huggingFaceCacheDirectory()
         let modelDir = cacheDir.appendingPathComponent(
             "models--\(modelId.replacingOccurrences(of: "/", with: "--"))"
@@ -105,7 +105,7 @@ class CleanupModelService {
             _ = MLXArray(0)
 
             let container = try await #huggingFaceLoadModelContainer(
-                configuration: LLMRegistry.gemma3_1B_qat_4bit
+                configuration: LLMRegistry.qwen2_5_1_5b
             ) { [weak self] progress in
                 guard let self else { return }
                 let fraction = progress.fractionCompleted
@@ -213,7 +213,7 @@ class CleanupModelService {
     func deleteModel() throws {
         unload()
 
-        let modelId = LLMRegistry.gemma3_1B_qat_4bit.name
+        let modelId = LLMRegistry.qwen2_5_1_5b.name
         let cacheDir = huggingFaceCacheDirectory()
         let modelDir = cacheDir.appendingPathComponent(
             "models--\(modelId.replacingOccurrences(of: "/", with: "--"))"
@@ -227,7 +227,7 @@ class CleanupModelService {
 
     /// Returns the file size of the downloaded model, or nil if not present.
     func modelFileSize() -> Int64? {
-        let modelId = LLMRegistry.gemma3_1B_qat_4bit.name
+        let modelId = LLMRegistry.qwen2_5_1_5b.name
         let cacheDir = huggingFaceCacheDirectory()
         let modelDir = cacheDir.appendingPathComponent(
             "models--\(modelId.replacingOccurrences(of: "/", with: "--"))"
