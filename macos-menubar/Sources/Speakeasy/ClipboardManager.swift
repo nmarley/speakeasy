@@ -9,9 +9,12 @@ class ClipboardManager {
     /// PushToTalkManager to ignore synthetic modifier events.
     static var isPasting = false
 
-    /// How long to wait before restoring the clipboard (100ms).
-    /// Non-blocking -- runs on a background queue.
-    private static let restoreDelay: TimeInterval = 0.1
+    /// How long to wait before restoring the clipboard (500ms).
+    /// Non-blocking -- runs on a background queue. There is no macOS
+    /// signal for when a foreign app reads the pasteboard (reads never
+    /// bump changeCount), so this is a blind window sized to outlast a
+    /// slow target app consuming the synthetic Cmd+V.
+    private static let restoreDelay: TimeInterval = 0.5
 
     /// Polling interval for changeCount checks (10ms).
     private static let pollInterval: TimeInterval = 0.01
@@ -21,6 +24,12 @@ class ClipboardManager {
 
     /// Cancellation token for the pending restore.
     private var restoreWork: DispatchWorkItem?
+
+    /// Monotonic paste counter. Incremented on every paste() call so a
+    /// restore scheduled by an earlier dictation can deterministically
+    /// detect that a newer paste has superseded it and bail out, even if
+    /// its DispatchWorkItem was already executing when cancelled.
+    private var pasteGeneration = 0
 
     /// Puts the given transcription text into the clipboard, simulates a
     /// Cmd+V paste, and asynchronously restores the previous clipboard
@@ -36,8 +45,12 @@ class ClipboardManager {
         Log.general.debug(
             "Previous clipboard content stored: \(previousContent ?? "nil", privacy: .public)")
 
-        // Cancel any in-flight restoration from a previous paste.
+        // Cancel any in-flight restoration from a previous paste and
+        // claim a new generation. Any older restore still executing will
+        // see this newer generation and bail before touching the clipboard.
         cancelPendingRestore()
+        pasteGeneration &+= 1
+        let generation = pasteGeneration
 
         // Write transcription eagerly so it is immediately available
         // to any app that processes the Cmd+V.
@@ -48,7 +61,6 @@ class ClipboardManager {
         // pasteboard server has committed the write before we post
         // the CGEvent, preventing the target app from reading stale data.
         let _ = pasteboard.changeCount
-        Thread.sleep(forTimeInterval: 0.01)
 
         // Verify transcription was set correctly.
         let clipboardAfterSet = pasteboard.string(forType: .string)
@@ -86,7 +98,8 @@ class ClipboardManager {
 
         scheduleRestore(
             expectedCount: ourChangeCount,
-            previousContent: previousContent
+            previousContent: previousContent,
+            generation: generation
         )
 
         Log.general.debug("ClipboardManager.paste() returning (restore is async)")
@@ -96,15 +109,24 @@ class ClipboardManager {
 
     private func scheduleRestore(
         expectedCount: Int,
-        previousContent: String?
+        previousContent: String?,
+        generation: Int
     ) {
-        let work = DispatchWorkItem { [weak self] in
+        var work: DispatchWorkItem!
+        work = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
 
             // Poll changeCount until the restore delay has elapsed.
             let deadline = Date().addingTimeInterval(Self.restoreDelay)
 
             while Date() < deadline {
+                // A newer paste has superseded us, or we were cancelled.
+                // Bail without touching the clipboard.
+                if work.isCancelled || self.pasteGeneration != generation {
+                    Log.general.debug(
+                        "ClipboardManager: restore superseded by newer paste, skipping")
+                    return
+                }
                 let currentCount = NSPasteboard.general.changeCount
                 if currentCount != expectedCount {
                     // Something else wrote to the clipboard. Don't
@@ -122,7 +144,15 @@ class ClipboardManager {
 
             // Delay elapsed, changeCount unchanged -- safe to restore.
             DispatchQueue.main.async { [weak self] in
-                guard self != nil else { return }
+                guard let self = self else { return }
+
+                // A newer paste claimed the clipboard while we were
+                // queued. Never clobber it with our stale content.
+                if work.isCancelled || self.pasteGeneration != generation {
+                    Log.general.debug(
+                        "ClipboardManager: restore superseded at restore time, skipping")
+                    return
+                }
 
                 // Double-check changeCount on main thread before restoring.
                 let pasteboard = NSPasteboard.general
