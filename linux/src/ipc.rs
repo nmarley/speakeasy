@@ -129,7 +129,7 @@ pub fn send_command(socket_path: &Path, command: Command) -> Result<Response, Ip
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     let mut stream = stream;
-    write!(stream, "{}\n", command.as_str())?;
+    writeln!(stream, "{}", command.as_str())?;
     stream.flush()?;
 
     let mut reader = BufReader::new(stream);
@@ -147,7 +147,7 @@ pub fn is_daemon_alive(socket_path: &Path) -> bool {
     }
     match UnixStream::connect(socket_path) {
         Ok(mut stream) => {
-            let _ = write!(stream, "status\n");
+            let _ = writeln!(stream, "status");
             let _ = stream.flush();
             let mut reader = BufReader::new(stream);
             let mut line = String::new();
