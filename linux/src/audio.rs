@@ -160,6 +160,14 @@ impl AudioRecorder {
         Ok(output_path)
     }
 
+    pub fn cancel(&mut self) {
+        self.stop_stream_only();
+        self.output_path = None;
+        if let Ok(mut buf) = self.samples.lock() {
+            buf.clear();
+        }
+    }
+
     fn stop_stream_only(&mut self) {
         if let Some(stream) = self.stream.take() {
             let _ = stream.pause();

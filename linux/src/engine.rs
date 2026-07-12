@@ -147,11 +147,47 @@ impl Engine {
         }
     }
 
-    pub fn run_once(&mut self, duration: Duration) -> Result<String, EngineError> {
-        self.start_recording()?;
-        std::thread::sleep(duration);
+    pub fn stop_transcribe_and_copy(&mut self) -> Result<String, EngineError> {
         let text = self.stop_and_transcribe()?;
         clipboard::copy_text(&text)?;
         Ok(text)
     }
+
+    pub fn toggle(&mut self) -> Result<ToggleResult, EngineError> {
+        match self.state {
+            AppState::Ready => {
+                self.start_recording()?;
+                Ok(ToggleResult::Started)
+            }
+            AppState::Recording => {
+                let text = self.stop_transcribe_and_copy()?;
+                Ok(ToggleResult::Stopped(text))
+            }
+            other => Err(EngineError::NotReady(other)),
+        }
+    }
+
+    pub fn cancel_recording(&mut self) -> Result<(), EngineError> {
+        if self.state != AppState::Recording {
+            return Ok(());
+        }
+        self.recorder.cancel();
+        if let Some(path) = self.wav_path.take() {
+            let _ = fs::remove_file(path);
+        }
+        self.state = transition(self.state, AppEvent::CancellationRequested);
+        Ok(())
+    }
+
+    pub fn run_once(&mut self, duration: Duration) -> Result<String, EngineError> {
+        self.start_recording()?;
+        std::thread::sleep(duration);
+        self.stop_transcribe_and_copy()
+    }
+}
+
+#[derive(Debug)]
+pub enum ToggleResult {
+    Started,
+    Stopped(String),
 }

@@ -52,11 +52,17 @@ impl Paths {
         fs::create_dir_all(&self.models_dir)?;
         Ok(())
     }
+
+    pub fn socket_path() -> Result<PathBuf, PathsError> {
+        let runtime = dirs::runtime_dir().ok_or(PathsError::MissingRuntimeDir)?;
+        Ok(runtime.join(format!("{APP_NAME}.sock")))
+    }
 }
 
 #[derive(Debug)]
 pub enum PathsError {
     MissingHome,
+    MissingRuntimeDir,
 }
 
 impl std::fmt::Display for PathsError {
@@ -64,6 +70,9 @@ impl std::fmt::Display for PathsError {
         match self {
             Self::MissingHome => {
                 write!(f, "could not resolve XDG directories (HOME unset?)")
+            }
+            Self::MissingRuntimeDir => {
+                write!(f, "could not resolve XDG_RUNTIME_DIR")
             }
         }
     }
