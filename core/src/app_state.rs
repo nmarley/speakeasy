@@ -58,7 +58,7 @@ impl From<u8> for AppEvent {
     }
 }
 
-fn transition(current_state: AppState, event: AppEvent) -> AppState {
+pub fn transition(current_state: AppState, event: AppEvent) -> AppState {
     use AppEvent::*;
     use AppState::*;
 
@@ -91,18 +91,18 @@ fn transition(current_state: AppState, event: AppEvent) -> AppState {
     }
 }
 
-fn can_start_recording(state: AppState) -> bool {
+pub fn can_start_recording(state: AppState) -> bool {
     matches!(state, AppState::Ready)
 }
 
-fn is_busy(state: AppState) -> bool {
+pub fn is_busy(state: AppState) -> bool {
     matches!(
         state,
         AppState::Recording | AppState::Transcribing | AppState::CleaningUp
     )
 }
 
-fn needs_setup(state: AppState) -> bool {
+pub fn needs_setup(state: AppState) -> bool {
     matches!(state, AppState::NeedsModel)
 }
 

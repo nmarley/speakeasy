@@ -1,5 +1,7 @@
 mod audio;
+mod clipboard;
 mod download;
+mod engine;
 mod paths;
 
 use std::env;
@@ -8,6 +10,7 @@ use std::time::Duration;
 
 use audio::record_for_duration;
 use download::{DownloadError, download_default_model};
+use engine::Engine;
 use paths::Paths;
 
 fn main() -> ExitCode {
@@ -58,6 +61,19 @@ fn main() -> ExitCode {
                 }
             }
         }
+        "once" => {
+            let seconds = args.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(3);
+            match cmd_once(seconds) {
+                Ok(text) => {
+                    println!("{text}");
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         other => {
             eprintln!("unknown command: {other}");
             print_usage();
@@ -77,6 +93,7 @@ fn print_usage() {
     println!("  speakeasy download-model     Download default Whisper model");
     println!("  speakeasy download-model -f  Re-download even if present");
     println!("  speakeasy record [seconds]   Record mic to 16 kHz mono WAV (default 3s)");
+    println!("  speakeasy once [seconds]     Record, transcribe, copy to clipboard");
     println!("  speakeasy version            Print version");
     println!("  speakeasy help               Show this help");
 }
@@ -120,4 +137,16 @@ fn cmd_record(seconds: u64) -> Result<std::path::PathBuf, Box<dyn std::error::Er
     let path = record_for_duration(&output, Duration::from_secs(seconds))?;
     eprintln!("Wrote {}", path.display());
     Ok(path)
+}
+
+fn cmd_once(seconds: u64) -> Result<String, Box<dyn std::error::Error>> {
+    let paths = Paths::resolve()?;
+    let mut engine = Engine::open(paths)?;
+    eprintln!("Recording for {seconds}s…");
+    let text = engine.run_once(Duration::from_secs(seconds))?;
+    eprintln!(
+        "Copied transcript to clipboard (state={:?})",
+        engine.state()
+    );
+    Ok(text)
 }

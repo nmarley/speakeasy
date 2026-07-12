@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 speakeasy-core = { path = "../core" }
+arboard = "3"
 cpal = "0.15"
 dirs = "6"
 hound = "3.5"

@@ -1,11 +1,12 @@
 #![allow(clippy::uninlined_format_args)]
 
-mod app_state;
+pub mod app_state;
 mod audio;
 
-use app_state::AppState;
+pub use app_state::{AppEvent, AppState, can_start_recording, is_busy, needs_setup, transition};
 pub use audio::{
-    free_rust_string, transcribe_audio_blocking, whisper_context_destroy, whisper_context_init,
+    WhisperModel, free_rust_string, transcribe_audio_blocking, whisper_context_destroy,
+    whisper_context_init,
 };
 
 #[unsafe(no_mangle)]

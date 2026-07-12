@@ -1,7 +1,33 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use std::path::Path;
 
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+pub struct WhisperModel {
+    ctx: WhisperContext,
+}
+
+impl WhisperModel {
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, String> {
+        let path = path.as_ref();
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| format!("model path is not valid UTF-8: {}", path.display()))?;
+        let params = WhisperContextParameters::default();
+        let ctx = WhisperContext::new_with_params(path_str, params)
+            .map_err(|e| format!("Failed to load Whisper model: {e}"))?;
+        Ok(Self { ctx })
+    }
+
+    pub fn transcribe(&self, audio_path: impl AsRef<Path>) -> Result<String, String> {
+        let path = audio_path.as_ref();
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| format!("audio path is not valid UTF-8: {}", path.display()))?;
+        transcribe_local(&self.ctx, path_str).map_err(|e| e.to_string())
+    }
+}
 
 /// Load a WAV file and return 16KHz mono f32 PCM samples.
 ///
