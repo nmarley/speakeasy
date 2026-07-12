@@ -1,0 +1,25 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+# List available commands
+default:
+    @just --list
+
+# Run cargo fmt
+fmt:
+    cargo fmt
+
+# Run cargo check
+check:
+    cargo check
+
+# Build release binary
+build:
+    cargo build --release
+
+# Run the binary
+run *args:
+    cargo run -- {{ args }}
+
+# Clean build artifacts
+clean:
+    cargo clean
