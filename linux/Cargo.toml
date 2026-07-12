@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 speakeasy-core = { path = "../core" }
+dirs = "6"
+ureq = "2"
 
 [profile.release]
 lto = true
