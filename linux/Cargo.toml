@@ -12,7 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 speakeasy-core = { path = "../core" }
+cpal = "0.15"
 dirs = "6"
+hound = "3.5"
 ureq = "2"
 
 [profile.release]

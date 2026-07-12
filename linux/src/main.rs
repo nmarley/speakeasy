@@ -1,9 +1,12 @@
+mod audio;
 mod download;
 mod paths;
 
 use std::env;
 use std::process::ExitCode;
+use std::time::Duration;
 
+use audio::record_for_duration;
 use download::{DownloadError, download_default_model};
 use paths::Paths;
 
@@ -42,6 +45,19 @@ fn main() -> ExitCode {
                 }
             }
         }
+        "record" => {
+            let seconds = args.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(3);
+            match cmd_record(seconds) {
+                Ok(path) => {
+                    println!("{}", path.display());
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         other => {
             eprintln!("unknown command: {other}");
             print_usage();
@@ -60,6 +76,7 @@ fn print_usage() {
     println!("  speakeasy paths              Show XDG data/config/model paths");
     println!("  speakeasy download-model     Download default Whisper model");
     println!("  speakeasy download-model -f  Re-download even if present");
+    println!("  speakeasy record [seconds]   Record mic to 16 kHz mono WAV (default 3s)");
     println!("  speakeasy version            Print version");
     println!("  speakeasy help               Show this help");
 }
@@ -87,4 +104,20 @@ fn cmd_download_model(force: bool) -> Result<(), DownloadError> {
         .map_err(|err| DownloadError::Io(std::io::Error::other(err.to_string())))?;
     download_default_model(&paths, force)?;
     Ok(())
+}
+
+fn cmd_record(seconds: u64) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let paths = Paths::resolve()?;
+    paths.ensure_dirs()?;
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let output = paths.cache_dir.join(format!("recording-{stamp}.wav"));
+
+    eprintln!("Recording for {seconds}s…");
+    let path = record_for_duration(&output, Duration::from_secs(seconds))?;
+    eprintln!("Wrote {}", path.display());
+    Ok(path)
 }
