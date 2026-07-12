@@ -1,2 +1,3 @@
+# Only applied when linking for macOS; ignored by non-Apple toolchains.
 [env]
 MACOSX_DEPLOYMENT_TARGET = "12.0"
