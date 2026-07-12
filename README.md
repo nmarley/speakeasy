@@ -1,32 +1,37 @@
 # Speakeasy
 
-Speakeasy is a lightweight macOS menu bar app that converts speech to text
-in near real-time. Press a hotkey, speak, and your words are transcribed
-and inserted directly into whatever text field you're working in.
+Speakeasy converts speech to text fully on-device. Speak, get a
+transcript on the clipboard (or pasted on macOS), and keep working.
 
-Both transcription and transcript cleanup run entirely on-device.
-Transcription uses whisper.cpp with Metal GPU acceleration on Apple
-Silicon. Transcript cleanup (punctuation and capitalization) runs via
-MLX Swift (Gemma 3 1B QAT 4-bit) on the Metal GPU. No API keys are
-required, no data leaves your Mac.
+## Platforms
+
+- **macOS** (`macos-menubar/`) -- menu bar app with global hotkeys,
+  automatic paste into the active field, Metal-accelerated Whisper, and
+  optional on-device transcript cleanup via MLX.
+- **Linux** (`linux/`) -- Wayland-friendly daemon with system tray,
+  compositor-bound hotkeys, clipboard-only output, and CPU Whisper by
+  default. See [linux/README.md](linux/README.md).
+
+Both front ends share the Rust **`core/`** library for the app state
+machine and Whisper transcription via whisper.cpp.
 
 ## Design Goals
 
-- **Minimal and unobtrusive** -- lives in the menu bar, stays out of your
-  way, follows macOS Human Interface Guidelines
-- **Two recording modes** -- push-to-talk (hold to record) and toggle
-  (press to start/stop), each with configurable global hotkeys
-- **Instant text insertion** -- transcribed text is automatically pasted
-  into the active text field via macOS accessibility APIs
-- **Fully local** -- both transcription and cleanup run on-device via
-  Metal GPU acceleration; no data leaves your Mac
+- **Minimal and unobtrusive** -- menu bar / tray, stays out of the way
+- **Fully local** -- transcription on-device; no API keys required
+- **Fast enough for flow** -- press a bind, speak, get text without
+  context-switching to another app
+
+macOS-specific goals (Accessibility paste, MLX cleanup, Metal) are
+documented under `macos-menubar/`. Linux goals (compositor binds,
+clipboard-only paste, StatusNotifierItem) are documented under `linux/`.
 
 ## Repository Structure
 
-- **`core/`** -- Rust library that handles audio capture and local
-  Whisper transcription via whisper.cpp with Metal acceleration
-- **`macos-menubar/`** -- macOS menu bar application written in Swift,
-  built with Swift Package Manager and AppKit
+- **`core/`** -- Rust library: deterministic state machine and Whisper
+  transcription on 16 kHz mono WAV (Metal on macOS, CPU on Linux)
+- **`macos-menubar/`** -- Swift/AppKit menu bar application
+- **`linux/`** -- Rust Wayland/Arch client (daemon, tray, socket IPC)
 
 ## License
 
