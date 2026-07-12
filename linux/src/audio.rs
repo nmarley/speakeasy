@@ -67,10 +67,6 @@ impl AudioRecorder {
         }
     }
 
-    pub fn is_recording(&self) -> bool {
-        self.recording
-    }
-
     pub fn start<P: AsRef<Path>>(&mut self, output_path: P) -> Result<(), AudioError> {
         if self.recording {
             self.stop_stream_only();

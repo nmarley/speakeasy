@@ -5,6 +5,7 @@ mod download;
 mod engine;
 mod ipc;
 mod paths;
+mod tray;
 
 use std::env;
 use std::process::ExitCode;
@@ -123,7 +124,7 @@ fn print_usage() {
     println!("  speakeasy download-model -f  Re-download even if present");
     println!("  speakeasy record [seconds]   Record mic to 16 kHz mono WAV (default 3s)");
     println!("  speakeasy once [seconds]     Record, transcribe, copy to clipboard");
-    println!("  speakeasy daemon             Run long-lived daemon (loads model)");
+    println!("  speakeasy daemon             Run daemon with tray + socket IPC");
     println!("  speakeasy start|stop|toggle  Control recording via daemon socket");
     println!("  speakeasy status|cancel|quit Daemon status / cancel / shutdown");
     println!("  speakeasy version            Print version");

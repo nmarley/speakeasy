@@ -2,12 +2,24 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, Sender};
 
 use speakeasy_core::AppState;
 
 use crate::engine::{Engine, ToggleResult};
 use crate::ipc::{Command, Response};
 use crate::paths::Paths;
+use crate::tray;
+
+pub enum DaemonMsg {
+    Ipc {
+        command: Command,
+        reply: Sender<Response>,
+    },
+    Tray {
+        command: Command,
+    },
+}
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let paths = Paths::resolve()?;
@@ -30,16 +42,40 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut engine = Engine::open(paths)?;
     eprintln!("model loaded (state={:?})", engine.state());
 
+    let (tx, rx) = mpsc::channel::<DaemonMsg>();
+    let socket_tx = tx.clone();
+
+    let tray_handle = match tray::spawn(tx, engine.state()) {
+        Ok(handle) => {
+            eprintln!("status notifier tray started");
+            Some(handle)
+        }
+        Err(err) => {
+            eprintln!("tray unavailable (continuing without tray): {err}");
+            None
+        }
+    };
+
     let cleanup_path = socket_path.clone();
     let _guard = SocketGuard { path: cleanup_path };
 
+    std::thread::spawn(move || socket_loop(listener, socket_tx));
+
+    engine_loop(&mut engine, rx, tray_handle.as_ref());
+
+    if let Some(handle) = tray_handle {
+        handle.shutdown().wait();
+    }
+
+    Ok(())
+}
+
+fn socket_loop(listener: UnixListener, tx: Sender<DaemonMsg>) {
     for connection in listener.incoming() {
         match connection {
             Ok(stream) => {
-                let should_quit = handle_client(stream, &mut engine);
-                if should_quit {
-                    eprintln!("shutdown requested");
-                    break;
+                if let Err(err) = handle_socket_client(stream, &tx) {
+                    eprintln!("socket client error: {err}");
                 }
             }
             Err(err) => {
@@ -47,28 +83,72 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-
-    Ok(())
 }
 
-fn handle_client(stream: UnixStream, engine: &mut Engine) -> bool {
+fn handle_socket_client(
+    stream: UnixStream,
+    tx: &Sender<DaemonMsg>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut reader = BufReader::new(&stream);
     let mut line = String::new();
-    if reader.read_line(&mut line).is_err() {
-        return false;
-    }
+    reader.read_line(&mut line)?;
 
     let command = match Command::parse(&line) {
         Some(cmd) => cmd,
         None => {
-            let _ = write_response(&stream, &Response::Err(format!("unknown command: {line}")));
-            return false;
+            write_response(&stream, &Response::Err(format!("unknown command: {line}")))?;
+            return Ok(());
         }
     };
 
-    let (response, quit) = dispatch(command, engine);
-    let _ = write_response(&stream, &response);
-    quit
+    let (reply_tx, reply_rx) = mpsc::channel();
+    tx.send(DaemonMsg::Ipc {
+        command,
+        reply: reply_tx,
+    })?;
+
+    let response = reply_rx.recv()?;
+    write_response(&stream, &response)?;
+    Ok(())
+}
+
+fn engine_loop(
+    engine: &mut Engine,
+    rx: Receiver<DaemonMsg>,
+    tray_handle: Option<&ksni::blocking::Handle<tray::SpeakeasyTray>>,
+) {
+    while let Ok(msg) = rx.recv() {
+        let (command, reply) = match msg {
+            DaemonMsg::Ipc { command, reply } => (command, Some(reply)),
+            DaemonMsg::Tray { command } => (command, None),
+        };
+
+        let (response, quit) = dispatch(command, engine);
+        if reply.is_none() {
+            match &response {
+                Response::Ok | Response::OkMsg(_) | Response::Status(_) => {
+                    eprintln!("tray: {}", response_log(&response));
+                }
+                Response::Err(msg) => eprintln!("tray error: {msg}"),
+            }
+        }
+
+        if let Some(reply) = reply {
+            let _ = reply.send(response);
+        }
+
+        if let Some(handle) = tray_handle {
+            let state = engine.state();
+            handle.update(|tray| {
+                tray.state = state;
+            });
+        }
+
+        if quit {
+            eprintln!("shutdown requested");
+            break;
+        }
+    }
 }
 
 fn dispatch(command: Command, engine: &mut Engine) -> (Response, bool) {
@@ -108,6 +188,15 @@ fn format_state(state: AppState) -> String {
         AppState::Recording => "Recording".into(),
         AppState::Transcribing => "Transcribing".into(),
         AppState::CleaningUp => "CleaningUp".into(),
+    }
+}
+
+fn response_log(response: &Response) -> String {
+    match response {
+        Response::Ok => "ok".into(),
+        Response::OkMsg(msg) => format!("ok {msg}"),
+        Response::Status(state) => format!("status {state}"),
+        Response::Err(msg) => format!("err {msg}"),
     }
 }
 
