@@ -44,10 +44,28 @@ cd linux && cargo build --release
 
 ## First run
 
-1. Download the default Whisper model (same `ggml-small.en.bin` as macOS):
+1. Download the default Whisper model (same `ggml-small.en.bin` as macOS,
+   about 466 MB, once):
 
    ```sh
    ./target/release/speakeasy download-model
+   ```
+
+   Speakeasy pulls the file from Hugging Face Hub via the official
+   `hf-hub` client (Xet transfers). A free read token is optional but
+   helps if anonymous Hub access is rate-limited:
+
+   ```sh
+   export HF_TOKEN=hf_...   # or HUGGING_FACE_HUB_TOKEN
+   ./target/release/speakeasy download-model
+   ```
+
+   Manual fallback if you already have the file (or prefer `hf download`):
+
+   ```sh
+   mkdir -p ~/.local/share/speakeasy/models
+   # place ggml-small.en.bin at:
+   # ~/.local/share/speakeasy/models/ggml-small.en.bin
    ```
 
 2. Check paths:
@@ -155,6 +173,8 @@ the transcript.
   check that a StatusNotifier host is running.
 - `once` does not need the daemon; useful for testing mic and model.
 - Model download is large (~466 MB). It only needs to complete once.
+  Re-run with `download-model -f` to replace it. If download fails, set
+  `HF_TOKEN` or drop the file into the models path listed under Paths.
 
 ## Architecture
 
