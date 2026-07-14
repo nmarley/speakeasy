@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 pub const APP_NAME: &str = "speakeasy";
 pub const DEFAULT_MODEL_FILENAME: &str = "ggml-small.en.bin";
+pub const DEFAULT_MODEL_REPO_OWNER: &str = "ggerganov";
+pub const DEFAULT_MODEL_REPO_NAME: &str = "whisper.cpp";
 pub const DEFAULT_MODEL_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin";
 pub const DEFAULT_MODEL_NAME: &str = "small.en";
