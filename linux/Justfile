@@ -1,5 +1,11 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
+# Install prefix (user-local by default; override e.g. PREFIX=/usr/local)
+prefix := env("PREFIX", home_dir() / ".local")
+bindir := prefix / "bin"
+unitdir := prefix / "share" / "systemd" / "user"
+docdir := prefix / "share" / "doc" / "speakeasy"
+
 # List available commands
 default:
     @just --list
@@ -23,3 +29,36 @@ run *args:
 # Clean build artifacts
 clean:
     cargo clean
+
+# Install binary, systemd user unit, and docs under PREFIX
+install: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    install -Dm755 target/release/speakeasy "{{ bindir }}/speakeasy"
+    tmp="$(mktemp)"
+    sed "s|@BINDIR@|{{ bindir }}|g" contrib/speakeasy.service.in >"$tmp"
+    install -Dm644 "$tmp" "{{ unitdir }}/speakeasy.service"
+    rm -f "$tmp"
+    install -Dm644 README.md "{{ docdir }}/README.md"
+    echo "Installed:"
+    echo "  binary: {{ bindir }}/speakeasy"
+    echo "  unit:   {{ unitdir }}/speakeasy.service"
+    echo "  docs:   {{ docdir }}/README.md"
+    echo
+    echo "Next steps:"
+    echo "  systemctl --user daemon-reload"
+    echo "  systemctl --user enable --now speakeasy.service"
+
+# Remove files installed by \`just install\` (same PREFIX)
+uninstall:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -f "{{ bindir }}/speakeasy"
+    rm -f "{{ unitdir }}/speakeasy.service"
+    rm -f "{{ docdir }}/README.md"
+    rmdir "{{ docdir }}" 2>/dev/null || true
+    echo "Removed Speakeasy files under {{ prefix }}"
+    echo
+    echo "If the user unit was enabled:"
+    echo "  systemctl --user disable --now speakeasy.service"
+    echo "  systemctl --user daemon-reload"
