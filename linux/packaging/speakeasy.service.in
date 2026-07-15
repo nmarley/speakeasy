@@ -1,0 +1,15 @@
+[Unit]
+Description=Speakeasy local speech-to-text
+After=graphical-session.target pipewire.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@BINDIR@/speakeasy daemon
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=120
+KillMode=mixed
+
+[Install]
+WantedBy=default.target
