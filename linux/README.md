@@ -13,6 +13,7 @@ your normal shortcut after transcription.
 - One-shot CLI (`once`) for scripts and testing
 - XDG paths for config, data, cache, and the Whisper model
 - Fully local transcription (CPU whisper.cpp by default)
+- systemd user unit for start at login
 
 ## Prerequisites (Arch)
 
@@ -42,13 +43,49 @@ Or:
 cd linux && cargo build --release
 ```
 
+## Install
+
+Installs the release binary, a systemd user unit, and this README under
+a prefix. Default prefix is `~/.local` (no root required).
+
+```sh
+cd linux
+just install
+```
+
+Layout (default prefix):
+
+| Artifact | Path |
+|----------|------|
+| Binary | `~/.local/bin/speakeasy` |
+| User unit | `~/.local/share/systemd/user/speakeasy.service` |
+| Docs | `~/.local/share/doc/speakeasy/README.md` |
+
+Override the prefix if needed:
+
+```sh
+PREFIX=/usr/local just install   # typically needs write access
+```
+
+Ensure `~/.local/bin` is on your `PATH` when using the default prefix.
+
+Remove an install with the same prefix:
+
+```sh
+just uninstall
+# PREFIX=/usr/local just uninstall
+```
+
 ## First run
 
-1. Download the default Whisper model (same `ggml-small.en.bin` as macOS,
+1. Install (see above), or use `./target/release/speakeasy` from a build
+   tree for one-off testing.
+
+2. Download the default Whisper model (same `ggml-small.en.bin` as macOS,
    about 466 MB, once):
 
    ```sh
-   ./target/release/speakeasy download-model
+   speakeasy download-model
    ```
 
    Speakeasy pulls the file from Hugging Face Hub via the official
@@ -57,7 +94,7 @@ cd linux && cargo build --release
 
    ```sh
    export HF_TOKEN=hf_...   # or HUGGING_FACE_HUB_TOKEN
-   ./target/release/speakeasy download-model
+   speakeasy download-model
    ```
 
    Manual fallback if you already have the file (or prefer `hf download`):
@@ -68,29 +105,49 @@ cd linux && cargo build --release
    # ~/.local/share/speakeasy/models/ggml-small.en.bin
    ```
 
-2. Check paths:
+3. Check paths:
 
    ```sh
-   ./target/release/speakeasy paths
+   speakeasy paths
    ```
 
-3. Start the daemon (loads model, starts tray + socket):
+4. Enable the user service so the daemon starts at login:
 
    ```sh
-   ./target/release/speakeasy daemon
+   systemctl --user daemon-reload
+   systemctl --user enable --now speakeasy.service
+   systemctl --user status speakeasy.service
    ```
 
-4. In another terminal (or via a keybind):
+   Logs:
+
+   ```sh
+   journalctl --user -u speakeasy.service -f
+   ```
+
+5. Control recording (another terminal, or a compositor keybind):
 
    ```sh
    speakeasy toggle   # start recording
    speakeasy toggle   # stop, transcribe, copy to clipboard
    speakeasy status
-   speakeasy quit
+   speakeasy quit     # or: systemctl --user stop speakeasy
    ```
 
-Install the binary somewhere on your `PATH` if you want short commands
-(for example copy `target/release/speakeasy` to `~/.local/bin/`).
+### Session environment
+
+The daemon needs a graphical session: PipeWire (or ALSA) for the mic,
+the session D-Bus for the tray, and usually `WAYLAND_DISPLAY` (or
+`DISPLAY`) for the clipboard. User units normally get
+`XDG_RUNTIME_DIR` and the session bus. If clipboard or tray misbehave
+after a systemd start, import the compositor environment once per
+login (many sessions already do this):
+
+```sh
+systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP DISPLAY
+dbus-update-activation-environment --systemd \
+  WAYLAND_DISPLAY XDG_CURRENT_DESKTOP DISPLAY
+```
 
 ## Paths
 
@@ -101,6 +158,7 @@ Install the binary somewhere on your `PATH` if you want short commands
 | Cache / temp WAVs | `~/.cache/speakeasy/` |
 | Whisper model | `~/.local/share/speakeasy/models/ggml-small.en.bin` |
 | Daemon socket | `$XDG_RUNTIME_DIR/speakeasy.sock` |
+| Installed docs | `$PREFIX/share/doc/speakeasy/README.md` |
 
 ## CLI
 
@@ -121,6 +179,9 @@ speakeasy help
 
 Hotkeys are not grabbed inside Speakeasy. Bind keys in your compositor
 to the CLI commands. Examples assume `speakeasy` is on your `PATH`.
+Prefer the systemd user unit for starting the daemon; compositor
+`exec-once` / `exec` / `spawn-at-startup` is a fine alternate if you
+do not want systemd.
 
 ### Hyprland
 
@@ -129,12 +190,9 @@ to the CLI commands. Examples assume `speakeasy` is on your `PATH`.
 bind = SUPER SHIFT, SPACE, exec, speakeasy toggle
 bind = SUPER SHIFT, C, exec, speakeasy cancel
 bind = SUPER SHIFT, Q, exec, speakeasy quit
-```
 
-Start the daemon from autostart:
-
-```conf
-exec-once = speakeasy daemon
+# Alternate to systemd --user (only if the unit is not enabled):
+# exec-once = speakeasy daemon
 ```
 
 ### Sway
@@ -145,7 +203,8 @@ bindsym $mod+Shift+space exec speakeasy toggle
 bindsym $mod+Shift+c exec speakeasy cancel
 bindsym $mod+Shift+q exec speakeasy quit
 
-exec speakeasy daemon
+# Alternate to systemd --user (only if the unit is not enabled):
+# exec speakeasy daemon
 ```
 
 ### niri
@@ -158,7 +217,8 @@ binds {
     Mod+Shift+Q { spawn "speakeasy" "quit"; }
 }
 
-spawn-at-startup "speakeasy" "daemon"
+// Alternate to systemd --user (only if the unit is not enabled):
+// spawn-at-startup "speakeasy" "daemon"
 ```
 
 Adjust modifiers and keys to taste. `toggle` is the usual push-to-talk
@@ -196,4 +256,4 @@ live in `core/`.
 - Auto-paste into the focused window
 - In-app global hotkey grabs
 - Transcript cleanup LLM (macOS MLX path only today)
-- AUR / Flatpak packaging
+- Distro packages (AUR, Flatpak, and similar)
