@@ -9,7 +9,8 @@ required.
 ## Prerequisites
 
 - Xcode command line tools
-- Metal Toolchain (one-time download):
+- Metal Toolchain. `just build` compiles MLX shaders with xcodebuild
+  and fails if this is missing. Required after Xcode or macOS upgrades:
   `xcodebuild -downloadComponent MetalToolchain`
 - Rust toolchain (for building `core/`)
 - `swift-format` (for code formatting)
