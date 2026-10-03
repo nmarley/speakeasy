@@ -13,6 +13,15 @@ protocol CleanupModelServiceDelegate: AnyObject {
     func cleanupModelDidFail(error: Error)
 }
 
+/// The result of one cleanup attempt: the text to use, the reason the
+/// model output was discarded when cleanup fell back to the raw
+/// transcript, and the sanitized model output before any fallback.
+struct CleanupOutcome {
+    let text: String
+    let rejectionReason: String?
+    let rawOutput: String?
+}
+
 /// Manages the local LLM used for transcript cleanup.
 ///
 /// Downloads, loads, and runs a Qwen2.5 1.5B Instruct 4-bit model via
@@ -118,9 +127,20 @@ class CleanupModelService {
     /// fails for any reason (model not loaded, inference error, etc.).
     /// This matches the fallback behavior of the former OpenAI path.
     func cleanupTranscript(_ transcript: String) async -> String {
+        await cleanupTranscriptOutcome(transcript).text
+    }
+
+    /// Run transcript cleanup and report why the model output was
+    /// rejected, if it was. Production callers use cleanupTranscript;
+    /// the debug probe uses this to see the raw rejection reason.
+    func cleanupTranscriptOutcome(_ transcript: String) async -> CleanupOutcome {
         guard isLoaded, let container = modelContainer else {
             Log.general.error("Cleanup model not loaded, returning original transcript")
-            return transcript
+            return CleanupOutcome(
+                text: transcript,
+                rejectionReason: "model not loaded",
+                rawOutput: nil
+            )
         }
 
         let userMessage = "<transcript>\(transcript)</transcript>"
@@ -160,18 +180,26 @@ class CleanupModelService {
                 Log.general.error(
                     "Cleanup model output rejected (\(rejectionReason, privacy: .public)), returning original transcript"
                 )
-                return transcript
+                return CleanupOutcome(
+                    text: transcript,
+                    rejectionReason: rejectionReason,
+                    rawOutput: sanitized
+                )
             }
 
             Log.general.info(
                 "Transcript cleanup completed: \(transcript.count, privacy: .public) chars in, \(sanitized.count, privacy: .public) chars out"
             )
-            return sanitized
+            return CleanupOutcome(text: sanitized, rejectionReason: nil, rawOutput: sanitized)
         } catch {
             Log.general.error(
                 "Cleanup failed: \(error.localizedDescription, privacy: .public), returning original transcript"
             )
-            return transcript
+            return CleanupOutcome(
+                text: transcript,
+                rejectionReason: "inference error: \(error.localizedDescription)",
+                rawOutput: nil
+            )
         }
     }
 

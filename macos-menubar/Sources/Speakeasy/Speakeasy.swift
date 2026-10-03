@@ -345,7 +345,12 @@ class AppDelegate: NSObject, NSApplicationDelegate,
         }
     }
 
-    static func main() {
+    static func main() async {
+        #if DEBUG
+            if CleanupProbe.isRequested {
+                exit(await CleanupProbe.run())
+            }
+        #endif
         let app = NSApplication.shared
         // Explicitly set activation policy to .accessory to ensure event taps
         // work on Tahoe (LSUIElement=true in Info.plist would default to a more
