@@ -29,9 +29,10 @@ public enum CleanupContract {
 
         Your only changes are punctuation and capitalization. Every word \
         stays exactly as dictated: same words, same order, same \
-        spelling. This includes slang, abbreviations, names, and \
-        profanity. "infra" stays "infra" (not "infrastructure"), and \
-        "wanna" stays "wanna" (not "want to").
+        spelling. This includes slang, abbreviations, contractions, \
+        names, and profanity. "infra" stays "infra" (not \
+        "infrastructure"), "wanna" stays "wanna" (not "want to"), and \
+        "em" stays "em" (not "them").
 
         Apply these corrections:
         - Add periods, commas, question marks, and other punctuation where they belong
@@ -46,8 +47,8 @@ public enum CleanupContract {
     // an imperative and a question transcript are punctuated, not
     // obeyed or answered. User turns mirror the real <transcript> tag
     // wrapping used by cleanupTranscript. The last two demonstrations
-    // pin verbatim word preservation: profanity is kept, and slang and
-    // abbreviations are never expanded.
+    // pin verbatim word preservation: profanity is kept, and slang,
+    // abbreviations, and contractions are never expanded.
     public static let fewShotExamples: [(user: String, assistant: String)] = [
         (
             user: "<transcript>the meeting starts at noon lets grab lunch after</transcript>",
@@ -78,8 +79,9 @@ public enum CleanupContract {
             assistant: "This fucking build is broken again."
         ),
         (
-            user: "<transcript>i wanna ship the infra changes on friday</transcript>",
-            assistant: "I wanna ship the infra changes on Friday."
+            user:
+                "<transcript>i wanna ship the infra changes on friday and test em first</transcript>",
+            assistant: "I wanna ship the infra changes on Friday and test 'em first."
         ),
     ]
 
