@@ -27,6 +27,11 @@ build: _check-rust-lib format build-metallib
     mkdir -p .build/arm64-apple-macosx/debug/Resources
     cp build/default.metallib .build/arm64-apple-macosx/debug/Resources/default.metallib
 
+# Run unit tests
+[group: 'development']
+test: _check-rust-lib
+    swift test
+
 # Run the app (debug)
 [group: 'development']
 run: format build-metallib

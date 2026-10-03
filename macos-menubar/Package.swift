@@ -15,9 +15,13 @@ let package = Package(
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
     ],
     targets: [
+        .target(
+            name: "CleanupContract"
+        ),
         .executableTarget(
             name: "Speakeasy",
             dependencies: [
+                "CleanupContract",
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
@@ -48,6 +52,10 @@ let package = Package(
                 .linkedFramework("MetalPerformanceShaders"),
                 .linkedLibrary("c++"),
             ]
-        )
+        ),
+        .testTarget(
+            name: "CleanupContractTests",
+            dependencies: ["CleanupContract"]
+        ),
     ]
 )
