@@ -496,15 +496,22 @@ extension AppDelegate {
         DispatchQueue.main.async { [weak self] in
             _ = self?.stateMachine.process(.transcriptionCompleted, context: transcription)
 
-            Log.general.debug(
-                "About to call ClipboardManager.paste() with transcription: \(transcription, privacy: .public)"
-            )
-            ClipboardManager.shared.paste(transcription: transcription)
-            Log.general.debug("ClipboardManager.paste() call completed")
+            self?.insertTranscription(transcription)
 
             self?.setupMenu()
             Log.general.debug("Menu updated with new transcript in history")
         }
+    }
+
+    private func insertTranscription(_ transcription: String) {
+        if TextInserter.shared.insert(transcription) {
+            Log.general.debug("Inserted via Accessibility, skipping clipboard")
+            return
+        }
+        Log.general.debug(
+            "AX insert failed, falling back to clipboard paste: \(transcription, privacy: .public)"
+        )
+        ClipboardManager.shared.paste(transcription: transcription)
     }
 
     private func processCleanupFailedOnMain() {
@@ -568,11 +575,7 @@ extension AppDelegate {
         DispatchQueue.main.async { [weak self] in
             _ = self?.stateMachine.process(.cleanupCompleted, context: transcription)
 
-            Log.general.debug(
-                "About to call ClipboardManager.paste() with cleaned transcription: \(transcription, privacy: .public)"
-            )
-            ClipboardManager.shared.paste(transcription: transcription)
-            Log.general.debug("ClipboardManager.paste() call completed")
+            self?.insertTranscription(transcription)
 
             self?.setupMenu()
             Log.general.debug("Menu updated with new transcript in history")

@@ -96,3 +96,16 @@ Release v<version>
 - Rust: edition 2024, formatted with `cargo fmt`
 - Swift: formatted with `swift-format` (runs automatically on build)
 - Dual-licensed: MIT / Apache-2.0
+
+## Verification
+
+Before committing macOS app changes, run `cd macos-menubar && just build`.
+Do not substitute `swift build`. `just build` also formats, checks the
+Rust lib, and compiles the MLX metallib. Only commit if it succeeds.
+
+`just build` compiles the MLX metallib via xcodebuild. After an Xcode
+or macOS upgrade, that step fails until the Metal toolchain is present:
+
+```sh
+xcodebuild -downloadComponent MetalToolchain
+```

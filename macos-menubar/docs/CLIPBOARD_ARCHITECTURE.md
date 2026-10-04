@@ -1,85 +1,68 @@
-# Clipboard/Paste Operations
+# Text Insertion
 
-All previously documented race conditions have been resolved. This
-document describes the current architecture for reference.
+After transcription (and optional cleanup), Speakeasy inserts the text
+into the focused field. Accessibility is the primary path. Clipboard
+paste is the fallback when the focused element cannot take selected
+text.
 
-## Code Flow: Recording to Paste
+## Recording to insert
 
-```
-1. User releases push-to-talk keys
-   └─> PushToTalkManager.updatePushToTalkState()
-       └─> DispatchQueue.main.async { delegate?.pushToTalkDidDisengage() }
+Push-to-talk release stops recording, then `transcribeAudio` runs
+Whisper. On success, optional MLX cleanup runs. Both the raw and
+cleaned finish paths call `insertTranscription` on the main queue
+after the state machine update and before the menu refresh.
 
-2. AppDelegate.pushToTalkDidDisengage()
-   └─> audioRecorder?.stopRecording { result in ... }
-       └─> (completion runs on unknown thread)
-           └─> transcribeAudio(url:)
+`insertTranscription` tries `TextInserter` first. On AX success it
+returns without touching the pasteboard. On AX failure it calls
+`ClipboardManager.paste`.
 
-3. transcribeAudio() [Speakeasy.swift]
-   └─> TranscriptionService.shared.transcribe(audioURL:) { result in ... }
+## Accessibility insert
 
-4. TranscriptionService.transcribe() [TranscriptionService.swift]
-   └─> Task.detached { ... Rust FFI call ... }
-   └─> Task { completion(.success(result)) }  // runs on cooperative thread pool
+`TextInserter` reads the system-wide focused element and, if
+`kAXSelectedTextAttribute` is settable, writes the transcription
+there. That inserts at the caret (or replaces the current selection)
+without using the clipboard, so there is no restore race.
 
-5. Completion handler [Speakeasy.swift]
-   └─> DispatchQueue.main.async {
-            stateMachine.process(...)               // state update first
-            ClipboardManager.shared.paste(...)      // then paste, sequentially
-            setupMenu()                             // then menu refresh
-        }
+This fails for Chrome, Electron, Terminal, secure fields, and any
+element that does not expose settable selected text. Those cases fall
+back to clipboard paste. Accessibility permission is already required
+for the push-to-talk event tap.
 
-6. ClipboardManager.paste() [ClipboardManager.swift]
-   └─> save previousContent
-   └─> write NSPasteboardItem with lazy data provider
-       (private UTI first = eagerly fetched, .string second = lazy)
-   └─> set isPasting = true
-   └─> 10ms sync settle
-   └─> post Cmd+V CGEvents (PushToTalkManager ignores events while isPasting)
-   └─> start changeCount polling on background queue
-   └─> return immediately (non-blocking)
+## Clipboard fallback
 
-7. Restoration (async, event-driven)
-   └─> Signal A: PasteDataProvider callback for .string fires
-       └─> consumer read the data, restore clipboard, isPasting = false
-   └─> Signal B: changeCount changes (polled every 10ms)
-       └─> another app took the clipboard, skip restore, isPasting = false
-   └─> Signal C: pasteboardFinishedWithDataProvider fires
-       └─> ownership lost before consumption, skip restore
-   └─> Fallback: 5s safety timeout
-       └─> something went wrong, restore anyway, isPasting = false
-```
+`ClipboardManager.paste` runs only on the main thread. It snapshots
+the current string pasteboard, writes the transcription, fences the
+write by reading `changeCount`, then posts a full Command-down,
+V-down, V-up, Command-up sequence from a private `CGEventSource` on
+the next runloop turn.
 
-## Design Decisions
+`ClipboardManager.isPasting` is true only while those synthetic keys
+are in flight (about 100ms). `PushToTalkManager` passes events through
+while it is true so the fake Command-V does not confuse modifier
+tracking. Restoration does not hold this flag; a 5s restore must not
+keep push-to-talk deaf.
 
-### Lazy data provider (two-type trick)
+A monotonic `pasteGeneration` invalidates any in-flight key-post or
+restore from an earlier dictation.
 
-macOS eagerly fetches the first pasteboard type at `writeObjects` time.
-To get a signal when the consuming app actually reads the paste, we
-register two types: a private UTI (`com.speakeasy.transcription`) as
-the first type (absorbs the eager fetch) and `.string` as the second
-(lazily provided only when a consumer reads it).
+## Clipboard restoration
 
-### Event tap guard
+Pasteboard reads never bump `changeCount`, so there is no signal that
+the target consumed the paste. The previous clipboard is restored
+after a 5s safety timeout, on the main thread, only if `changeCount`
+is still the value from our write. If another app wrote in the
+meantime, restore is skipped.
 
-`ClipboardManager.isPasting` is set to `true` while a paste is in
-flight. `PushToTalkManager.handleEvent` checks this flag and passes
-events through unmodified during paste, preventing synthetic Cmd+V
-modifier events from confusing push-to-talk state tracking.
+A 500ms restore was too short on macOS 26: slow consumers read the
+already-restored previous clipboard instead of the transcription.
 
-### Clipboard restoration
+## Testing
 
-The previous clipboard content is always restored after the consuming
-app reads the transcription. If another app takes clipboard ownership
-before consumption, restoration is skipped (we would clobber the new
-content). A 5-second safety timeout ensures restoration happens even
-if the paste signal is never received.
-
-## Testing Recommendations
-
-1. Run 50+ consecutive transcriptions with clipboard pre-populated
-2. Test with various target apps (native, Electron, Java-based)
-3. Test while Universal Clipboard is active (iPhone nearby)
-4. Verify no "CLIPBOARD RESTORATION FAILED" errors in logs
-5. Confirm correct content is pasted every time
-6. Monitor for "safety timeout reached" warnings (indicates fallback fired)
+1. Native AppKit fields (Notes, TextEdit): AX insert, clipboard
+   unchanged.
+2. Chrome, Electron, Terminal: AX fails, clipboard paste, correct
+   text in the target.
+3. Fifty consecutive dictations with a pre-populated clipboard.
+4. Universal Clipboard active (iPhone nearby).
+5. No "CLIPBOARD RESTORATION FAILED" errors in logs.
+6. History in the Speakeasy menu matches what landed in the target.
