@@ -27,12 +27,23 @@ build: _check-rust-lib format build-metallib
     mkdir -p .build/arm64-apple-macosx/debug/Resources
     cp build/default.metallib .build/arm64-apple-macosx/debug/Resources/default.metallib
 
+# Run unit tests
+[group: 'development']
+test: _check-rust-lib
+    swift test
+
 # Run the app (debug)
 [group: 'development']
 run: format build-metallib
     mkdir -p .build/arm64-apple-macosx/debug/Resources
     cp build/default.metallib .build/arm64-apple-macosx/debug/Resources/default.metallib
     swift run
+
+# Run cleanup probes against the real model (debug builds only)
+[group: 'development']
+probe: _check-rust-lib format build-metallib
+    swift build
+    swift run --skip-build Speakeasy --cleanup-probes
 
 # Build for release (arm64 only -- MLX requires Apple Silicon)
 [group: 'release steps']
