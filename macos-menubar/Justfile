@@ -24,8 +24,8 @@ format:
 [group: 'development']
 build: _check-rust-lib format build-metallib
     swift build
-    mkdir -p .build/arm64-apple-macosx/debug/Resources
-    cp build/default.metallib .build/arm64-apple-macosx/debug/Resources/default.metallib
+    mkdir -p .build/debug/Resources
+    cp build/default.metallib .build/debug/Resources/default.metallib
 
 # Run unit tests
 [group: 'development']
@@ -35,8 +35,8 @@ test: _check-rust-lib
 # Run the app (debug)
 [group: 'development']
 run: format build-metallib
-    mkdir -p .build/arm64-apple-macosx/debug/Resources
-    cp build/default.metallib .build/arm64-apple-macosx/debug/Resources/default.metallib
+    mkdir -p .build/debug/Resources
+    cp build/default.metallib .build/debug/Resources/default.metallib
     swift run
 
 # Run cleanup probes against the real model (debug builds only)
@@ -49,8 +49,8 @@ probe: _check-rust-lib format build-metallib
 [group: 'release steps']
 build-release: _check-rust-lib build-metallib
     swift build -c release --arch arm64
-    mkdir -p .build/arm64-apple-macosx/release/Resources
-    cp build/default.metallib .build/arm64-apple-macosx/release/Resources/default.metallib
+    mkdir -p .build/release/Resources
+    cp build/default.metallib .build/release/Resources/default.metallib
 
 # Build the MLX Metal shaders into default.metallib
 # SwiftPM cannot compile Metal shaders; xcodebuild is required.
@@ -87,7 +87,7 @@ bundle: build-release
     mkdir -p {{ APP_BUNDLE }}/Contents/Resources
     cp {{ INFO_PLIST }} {{ APP_BUNDLE }}/Contents/Info.plist
     cp Sources/{{ APP_NAME }}/Resources/AppIcon.icns {{ APP_BUNDLE }}/Contents/Resources
-    cp .build/arm64-apple-macosx/release/{{ APP_NAME }} {{ APP_BUNDLE }}/Contents/MacOS/{{ APP_NAME }}
+    cp .build/release/{{ APP_NAME }} {{ APP_BUNDLE }}/Contents/MacOS/{{ APP_NAME }}
     cp build/default.metallib {{ APP_BUNDLE }}/Contents/MacOS/Resources/default.metallib
     @echo "Created release bundle {{ APP_BUNDLE }} using {{ INFO_PLIST }}"
 
