@@ -147,10 +147,13 @@ class CleanupModelService {
 
         // Cap generated tokens proportional to input length. Cleanup
         // should only add punctuation and fix capitalization, so the
-        // output is at most slightly longer than the input. The floor
-        // handles very short transcripts and the cap prevents runaway
-        // generation. Roughly 1 token per 4 characters of input.
-        let maxTokens = min(512, max(64, transcript.count / 4))
+        // output is slightly longer than the input. The estimate uses
+        // 3 characters per token: English with punctuation added runs
+        // close to that, so a 4-char estimate would truncate the
+        // longest transcripts and get every word-count check rejected.
+        // The floor handles very short transcripts and the cap
+        // prevents runaway generation.
+        let maxTokens = min(1024, max(64, transcript.count / 3))
 
         // Build a fresh, isolated session for every cleanup. Reusing a
         // single long-lived session let its KV cache accumulate prior

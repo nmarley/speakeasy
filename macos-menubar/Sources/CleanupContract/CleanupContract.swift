@@ -112,6 +112,88 @@ public enum CleanupContract {
         )
     }
 
+    /// Split text into normalized content words: lowercase, letters
+    /// and digits only, with punctuation and case removed. Apostrophes
+    /// are removed before splitting so a contraction and its spoken
+    /// form stay one word ("let's" matches "lets"), while other
+    /// punctuation splits so hyphenated compounds stay equivalent to
+    /// their spaced forms ("double-check" matches "double check").
+    public static func normalizedWords(_ text: String) -> [String] {
+        let normalized = text.precomposedStringWithCanonicalMapping.lowercased()
+        let withoutApostrophes = normalized.unicodeScalars.filter { scalar in
+            scalar != "'" && scalar != "\u{2019}" && scalar != "\u{2018}"
+        }
+        return
+            withoutApostrophes
+            .split(
+                omittingEmptySubsequences: true,
+                whereSeparator: { !CharacterSet.alphanumerics.contains($0) }
+            )
+            .map(String.init)
+    }
+
+    /// Pure connectives and filler words the cleanup model may drop
+    /// when it splits a run-on sentence into separate sentences
+    /// ("...the pipeline and of course it was red" becomes
+    /// "...the pipeline. Of course, it was red..."). Dropping these
+    /// at a sentence boundary is what a human transcriptionist does.
+    /// The set is closed and contains no content words, so the
+    /// validator still rejects dropped articles, profanity, names,
+    /// and any substituted, added, or reordered word.
+    static let droppableConnectives: Set<String> = [
+        "and", "but", "or", "so", "then", "because", "also",
+        "anyway", "well", "now", "oh", "um", "uh", "ok", "okay",
+        "yeah", "though",
+    ]
+
+    /// Compare input and output word lists and return a rejection
+    /// reason unless the only differences are dropped connectives.
+    private static func compareWords(
+        input: [String], output: [String]
+    ) -> String? {
+        // Longest-common-subsequence table so drops are located at
+        // any position, not just where a linear walk happens to
+        // resynchronize.
+        let n = input.count
+        let m = output.count
+        var lcs = Array(repeating: Array(repeating: 0, count: m + 1), count: n + 1)
+        for i in stride(from: n - 1, through: 0, by: -1) {
+            for j in stride(from: m - 1, through: 0, by: -1) {
+                if input[i] == output[j] {
+                    lcs[i][j] = lcs[i + 1][j + 1] + 1
+                } else {
+                    lcs[i][j] = max(lcs[i + 1][j], lcs[i][j + 1])
+                }
+            }
+        }
+
+        var i = 0
+        var j = 0
+        while i < n, j < m {
+            if input[i] == output[j] {
+                i += 1
+                j += 1
+            } else if lcs[i + 1][j] >= lcs[i][j + 1] {
+                if !droppableConnectives.contains(input[i]) {
+                    return "dropped word \"\(input[i])\""
+                }
+                i += 1
+            } else {
+                return "added word \"\(output[j])\""
+            }
+        }
+        while i < n {
+            if !droppableConnectives.contains(input[i]) {
+                return "dropped word \"\(input[i])\""
+            }
+            i += 1
+        }
+        if j < m {
+            return "added word \"\(output[j])\""
+        }
+        return nil
+    }
+
     /// Validate that the sanitized output is a plausible cleaned
     /// transcript and not a prompt leak, a corrupted result, or an
     /// edit that changed the words.
@@ -136,16 +218,17 @@ public enum CleanupContract {
             }
         }
 
-        // Reject if the output does not contain exactly the same
-        // content as the input. Cleanup may only change punctuation
-        // and capitalization, so any dropped, added, substituted, or
-        // reordered word is a contract violation. This is the hard
-        // guarantee that no dictated word can be lost or rewritten.
-        let inputContent = normalizedContent(input)
-        let outputContent = normalizedContent(output)
-        if inputContent != outputContent {
-            return
-                "content changed (\(inputContent.count) chars in, \(outputContent.count) chars out)"
+        // Reject unless the output contains exactly the input's
+        // content words. Cleanup may change punctuation and
+        // capitalization, and may drop a connective when it splits
+        // a run-on into sentences, but any dropped content word,
+        // substitution, addition, or reorder is a contract
+        // violation. This is the hard guarantee that no dictated
+        // word can be lost or rewritten.
+        if let reason = compareWords(
+            input: normalizedWords(input), output: normalizedWords(output)
+        ) {
+            return "content changed (\(reason))"
         }
 
         return nil

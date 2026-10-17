@@ -56,6 +56,44 @@ final class CleanupContractTests: XCTestCase {
         )
     }
 
+    func testValidationAcceptsConnectiveDroppedAtSentenceSplit() {
+        XCTAssertNil(
+            CleanupContract.validateCleanup(
+                input:
+                    "i woke up and checked the pipeline and of course it was red again anyway after that i jumped on the call",
+                output:
+                    "I woke up and checked the pipeline. Of course, it was red again. Anyway, after that, I jumped on the call."
+            )
+        )
+    }
+
+    func testValidationRejectsDroppedContentWord() {
+        XCTAssertNotNil(
+            CleanupContract.validateCleanup(
+                input: "checked the pipeline and the database",
+                output: "Checked the pipeline."
+            )
+        )
+    }
+
+    func testValidationRejectsDroppedArticle() {
+        XCTAssertNotNil(
+            CleanupContract.validateCleanup(
+                input: "ship the infra changes",
+                output: "Ship infra changes."
+            )
+        )
+    }
+
+    func testValidationRejectsDroppedWordFollowedByAddedWord() {
+        XCTAssertNotNil(
+            CleanupContract.validateCleanup(
+                input: "ship the infra changes today",
+                output: "Ship the infrastructure changes today."
+            )
+        )
+    }
+
     func testValidationRejectsDroppedWord() {
         XCTAssertNotNil(
             CleanupContract.validateCleanup(
