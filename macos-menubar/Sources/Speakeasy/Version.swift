@@ -1,5 +1,5 @@
 enum Version {
-    static let current = "1.2.1"
+    static let current = "1.2.2"
 
     #if DEBUG
         static let suffix = "-dev"
