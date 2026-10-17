@@ -16,8 +16,8 @@ The project has two components:
 - **`macos-menubar/`** -- Swift + AppKit menu bar application built
   with Swift Package Manager. Links against
   `core/target/release/libspeakeasy_core.a`. Transcript cleanup runs
-  locally via MLX Swift (Gemma 3 1B QAT 4-bit) on the Metal GPU, no
-  network calls required.
+  locally via MLX Swift (Qwen2.5 1.5B Instruct 4-bit) on the Metal GPU,
+  no network calls required.
 
 ## Build Chain
 
