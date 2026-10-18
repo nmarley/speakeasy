@@ -146,20 +146,71 @@ public enum CleanupContract {
         "yeah", "though",
     ]
 
-    /// Compare input and output word lists and return a rejection
-    /// reason unless the only differences are dropped connectives.
-    private static func compareWords(
-        input: [String], output: [String]
-    ) -> String? {
-        // Longest-common-subsequence table so drops are located at
+    /// The word-level differences between a transcript and a cleanup
+    /// attempt: which content words the attempt dropped, which words
+    /// it added, and which droppable connectives it omitted.
+    /// Connective omissions are legal cleanup behavior, so they are
+    /// reported separately and do not reject the output.
+    public struct ContentDiff {
+        public let droppedWords: [String]
+        public let addedWords: [String]
+        public let droppedConnectives: [String]
+
+        /// True when no word was dropped, added, or omitted at all.
+        public var isExact: Bool {
+            droppedWords.isEmpty && addedWords.isEmpty
+                && droppedConnectives.isEmpty
+        }
+
+        /// True when the attempt only made legal changes: dropped
+        /// connectives at most, no content words lost or added.
+        public var isValid: Bool { droppedWords.isEmpty && addedWords.isEmpty }
+
+        /// The human-readable reason the attempt fails validation,
+        /// or nil when the attempt is valid.
+        public var rejectionReason: String? {
+            if isValid { return nil }
+            var parts: [String] = []
+            if !droppedWords.isEmpty {
+                parts.append(
+                    "dropped \(wordCountPhrase(droppedWords))"
+                )
+            }
+            if !addedWords.isEmpty {
+                parts.append("added \(wordCountPhrase(addedWords))")
+            }
+            return "content changed (\(parts.joined(separator: "; ")))"
+        }
+
+        private func wordCountPhrase(_ words: [String]) -> String {
+            let quoted = words.map { "\"\($0)\"" }
+            switch quoted.count {
+            case 1: return "word \(quoted[0])"
+            default:
+                return "words "
+                    + quoted.dropLast().joined(separator: ", ")
+                    + " and \(quoted.last!)"
+            }
+        }
+    }
+
+    /// Compare a transcript against a cleanup attempt and report
+    /// exactly which words were dropped, added, or legally omitted.
+    public static func contentDiff(
+        input: String, output: String
+    ) -> ContentDiff {
+        let inputWords = normalizedWords(input)
+        let outputWords = normalizedWords(output)
+
+        // Longest-common-subsequence table so changes are located at
         // any position, not just where a linear walk happens to
         // resynchronize.
-        let n = input.count
-        let m = output.count
+        let n = inputWords.count
+        let m = outputWords.count
         var lcs = Array(repeating: Array(repeating: 0, count: m + 1), count: n + 1)
         for i in stride(from: n - 1, through: 0, by: -1) {
             for j in stride(from: m - 1, through: 0, by: -1) {
-                if input[i] == output[j] {
+                if inputWords[i] == outputWords[j] {
                     lcs[i][j] = lcs[i + 1][j + 1] + 1
                 } else {
                     lcs[i][j] = max(lcs[i + 1][j], lcs[i][j + 1])
@@ -167,31 +218,88 @@ public enum CleanupContract {
             }
         }
 
+        var droppedWords: [String] = []
+        var addedWords: [String] = []
+        var droppedConnectives: [String] = []
+
         var i = 0
         var j = 0
         while i < n, j < m {
-            if input[i] == output[j] {
+            if inputWords[i] == outputWords[j] {
                 i += 1
                 j += 1
             } else if lcs[i + 1][j] >= lcs[i][j + 1] {
-                if !droppableConnectives.contains(input[i]) {
-                    return "dropped word \"\(input[i])\""
+                if droppableConnectives.contains(inputWords[i]) {
+                    droppedConnectives.append(inputWords[i])
+                } else {
+                    droppedWords.append(inputWords[i])
                 }
                 i += 1
             } else {
-                return "added word \"\(output[j])\""
+                addedWords.append(outputWords[j])
+                j += 1
             }
         }
         while i < n {
-            if !droppableConnectives.contains(input[i]) {
-                return "dropped word \"\(input[i])\""
+            if droppableConnectives.contains(inputWords[i]) {
+                droppedConnectives.append(inputWords[i])
+            } else {
+                droppedWords.append(inputWords[i])
             }
             i += 1
         }
-        if j < m {
-            return "added word \"\(output[j])\""
+        while j < m {
+            addedWords.append(outputWords[j])
+            j += 1
         }
-        return nil
+
+        return ContentDiff(
+            droppedWords: droppedWords,
+            addedWords: addedWords,
+            droppedConnectives: droppedConnectives
+        )
+    }
+
+    /// Build the corrective user message sent to the model after a
+    /// rejected cleanup attempt. The message names exactly which
+    /// words were dropped or added, then re-anchors the transcript
+    /// inside <transcript> tags. Repeating the transcript is what
+    /// keeps the model from treating the feedback as content to
+    /// discuss: it always has the text to clean in front of it.
+    public static func correctiveMessage(
+        _ diff: ContentDiff, transcript: String
+    ) -> String {
+        var problems: [String] = []
+        if !diff.droppedWords.isEmpty {
+            problems.append("dropped \(countWords(diff.droppedWords))")
+        }
+        if !diff.addedWords.isEmpty {
+            problems.append("added \(countWords(diff.addedWords))")
+        }
+        let problemSentence: String
+        if problems.isEmpty {
+            problemSentence = "Your previous reply did not preserve the transcript's words."
+        } else {
+            problemSentence = "Your previous reply \(problems.joined(separator: " and "))."
+        }
+        return """
+            \(problemSentence) Clean the transcript below again: fix \
+            punctuation and capitalization, and keep every word \
+            exactly once, in the same order.
+
+            <transcript>\(transcript)</transcript>
+            """
+    }
+
+    private static func countWords(_ words: [String]) -> String {
+        let quoted = words.map { "\"\($0)\"" }
+        switch quoted.count {
+        case 1: return quoted[0]
+        case 2: return "\(quoted[0]) and \(quoted[1])"
+        default:
+            return quoted.dropLast().joined(separator: ", ")
+                + ", and \(quoted.last!)"
+        }
     }
 
     /// Validate that the sanitized output is a plausible cleaned
@@ -225,13 +333,7 @@ public enum CleanupContract {
         // substitution, addition, or reorder is a contract
         // violation. This is the hard guarantee that no dictated
         // word can be lost or rewritten.
-        if let reason = compareWords(
-            input: normalizedWords(input), output: normalizedWords(output)
-        ) {
-            return "content changed (\(reason))"
-        }
-
-        return nil
+        return contentDiff(input: input, output: output).rejectionReason
     }
 
     /// Minimal post-processing guard on raw model output: trim

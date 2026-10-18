@@ -3,9 +3,9 @@
     import Foundation
 
     /// Debug-only probe that runs fixed transcripts through the real
-    /// cleanup model and reports whether each one preserved its words.
-    /// Run with `just probe` to check whether the current model can be
-    /// trusted or must be replaced.
+    /// cleanup model and reports whether each one came back cleaned
+    /// and validated. Run with `just probe` to check whether the
+    /// current pipeline can be trusted or must be replaced.
     enum CleanupProbe {
         private struct Probe {
             let name: String
@@ -48,6 +48,11 @@
                 transcript:
                     "so this morning i woke up and checked the ci pipeline and of course it was red again which was super frustrating because i had fixed it the night before or at least i thought i had and it turns out the flaky test in the payments module was failing intermittently so i reran it three times and it passed twice which means it's still flaky and we need to quarantine it before someone spends their whole day chasing a ghost anyway after that i jumped on the standup call and we talked about the release schedule for next week and whether we should hold the release until the migration is done or ship it behind a feature flag which honestly seems like the better option because the migration is risky and if it goes sideways we'd have to roll back the whole release and that would be a nightmare so my action items from the meeting were to write up the feature flag proposal and send it to the team by end of day and also to ping the platform team about getting a staging database provisioned because apparently that request got lost somewhere in their backlog and nobody has looked at it in two weeks which is just fantastic and then in the afternoon i reviewed a couple of pull requests and left comments on both of them mostly about error handling because people keep forgetting to unwrap their optionals safely and then finally right before end of day i started writing the migration script itself and got about halfway through before i realized i needed to double check the schema on production because the docs are out of date and nobody has updated them since march so tomorrow i need to finish the migration script verify the schema and finish the feature flag proposal which should all be doable if there are no surprises"
             ),
+            Probe(
+                name: "farcaster ramble",
+                transcript:
+                    "yeah okay so I think that include exclude casts from any other client just means any other far caster casts can be excluded as in not shown or included as in shown but not necessarily deleted unless delete means something to you different than it means to me to me that means delete it from you know try and issue a delete on the blockchain or something I don't know I don't know though here's the deal I don't know what the fuck I'm doing I don't know what this technology does I don't know how this is supposed to work I know nothing about far caster quite frankly it seems to me like an on-chain Twitter maybe that's what it is I don't know"
+            ),
         ]
 
         /// Whether this process was launched with --cleanup-probes.
@@ -67,12 +72,13 @@
                     probe.transcript
                 )
 
-                if let reason = outcome.rejectionReason {
+                if outcome.text == probe.transcript {
+                    // The one result users must never see: the raw
+                    // transcript pasted as if it were cleaned.
                     failures += 1
-                    print("\(probe.name): REJECTED (\(reason))")
-                    print("  model: \(outcome.rawOutput ?? "<none>")")
-                } else if outcome.text == probe.transcript {
-                    print("\(probe.name): UNCHANGED")
+                    print("\(probe.name): RAW PASTE (\(outcome.rejectionReason ?? "no reason"))")
+                } else if let reason = outcome.rejectionReason {
+                    print("\(probe.name): CLEANED, UNVALIDATED (\(reason))")
                 } else {
                     print("\(probe.name): PASS")
                 }
@@ -81,7 +87,7 @@
             }
 
             if failures == 0 {
-                print("all probes preserved content")
+                print("no probe pasted the raw transcript")
                 return 0
             }
             print("\(failures) probe(s) failed")
