@@ -13,8 +13,8 @@ The background image (arrow graphic) lives at
 
 ```sh
 mkdir -p dmg-build
-hdiutil create -size 10m -volname "Speakeasy" \
-    -srcfolder dmg-build -fs HFS+ -format UDRW Speakeasy-temp.dmg
+diskutil image create from --volumeName "Speakeasy" \
+    --format UDRW dmg-build Speakeasy-temp.dmg
 ```
 
 2. Attach the temporary DMG:
