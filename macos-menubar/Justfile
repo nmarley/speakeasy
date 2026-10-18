@@ -145,7 +145,7 @@ build-dmg: staple-bundle
     mkdir -p dmg-build/.background
     cp assets/background_arrow_dmg.tiff ./dmg-build/.background/background_arrow_dmg.tiff
     cp assets/dmg_DS_Store ./dmg-build/.DS_Store
-    hdiutil create -volname "{{ APP_NAME }}" -srcfolder dmg-build -ov -fs HFS+ -format UDZO {{ APP_DMG }}
+    diskutil image create from --volumeName "{{ APP_NAME }}" --format UDZO dmg-build {{ APP_DMG }}
     @echo "Created release DMG: {{ APP_DMG }}"
 
 # Build debug DMG installer
@@ -158,7 +158,7 @@ build-dmg-debug: bundle-debug
     mkdir -p dmg-build/.background
     cp assets/background_arrow_dmg.tiff ./dmg-build/.background/background_arrow_dmg.tiff
     cp assets/dmg_DS_Store ./dmg-build/.DS_Store
-    hdiutil create -volname "{{ APP_NAME }} Debug" -srcfolder dmg-build -ov -fs HFS+ -format UDZO {{ APP_NAME }}-debug.dmg
+    diskutil image create from --volumeName "{{ APP_NAME }} Debug" --format UDZO dmg-build {{ APP_NAME }}-debug.dmg
     @echo "Created debug DMG: {{ APP_NAME }}-debug.dmg"
 
 # Notarize the DMG
