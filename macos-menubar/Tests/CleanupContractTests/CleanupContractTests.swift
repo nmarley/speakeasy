@@ -139,6 +139,72 @@ final class CleanupContractTests: XCTestCase {
         )
     }
 
+    func testContentDiffReportsNothingForIdenticalWords() {
+        let diff = CleanupContract.contentDiff(
+            input: "hello world", output: "Hello, world!"
+        )
+        XCTAssertTrue(diff.isExact)
+        XCTAssertTrue(diff.isValid)
+        XCTAssertNil(diff.rejectionReason)
+    }
+
+    func testContentDiffSeparatesConnectivesFromContentWords() {
+        let diff = CleanupContract.contentDiff(
+            input: "the pipeline and of course it was red",
+            output: "The pipeline. Of course, it was red."
+        )
+        XCTAssertTrue(diff.isValid)
+        XCTAssertFalse(diff.isExact)
+        XCTAssertEqual(diff.droppedConnectives, ["and"])
+        XCTAssertTrue(diff.droppedWords.isEmpty)
+        XCTAssertTrue(diff.addedWords.isEmpty)
+    }
+
+    func testContentDiffNamesDroppedAndAddedWords() {
+        let diff = CleanupContract.contentDiff(
+            input: "i think that include exclude casts work",
+            output: "I think that exclude casts work today."
+        )
+        XCTAssertFalse(diff.isValid)
+        XCTAssertEqual(diff.droppedWords, ["include"])
+        XCTAssertEqual(diff.addedWords, ["today"])
+        XCTAssertTrue(
+            diff.rejectionReason!.contains("include")
+                && diff.rejectionReason!.contains("today")
+        )
+    }
+
+    func testCorrectiveMessageNamesTheMistakes() {
+        let diff = CleanupContract.contentDiff(
+            input: "i think that include exclude casts work",
+            output: "I think that exclude casts work today."
+        )
+        let message = CleanupContract.correctiveMessage(
+            diff, transcript: "i think that include exclude casts work"
+        )
+        XCTAssertTrue(message.contains("\"include\""))
+        XCTAssertTrue(message.contains("\"today\""))
+        XCTAssertTrue(message.contains("<transcript>"))
+    }
+
+    func testCorrectiveMessageReanchorsTheTranscript() {
+        let diff = CleanupContract.contentDiff(
+            input: "hello there", output: "Hello there, friend."
+        )
+        let message = CleanupContract.correctiveMessage(
+            diff, transcript: "hello there"
+        )
+        XCTAssertTrue(message.hasSuffix("<transcript>hello there</transcript>"))
+    }
+
+    func testCorrectiveMessageForEmptyDiffIsStillUsable() {
+        let message = CleanupContract.correctiveMessage(
+            CleanupContract.contentDiff(input: "hello", output: "Hello."),
+            transcript: "hello"
+        )
+        XCTAssertTrue(message.contains("<transcript>hello</transcript>"))
+    }
+
     func testValidationRejectsEmptyOutput() {
         XCTAssertNotNil(
             CleanupContract.validateCleanup(input: "hello", output: "")

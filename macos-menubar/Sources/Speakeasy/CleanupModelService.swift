@@ -13,9 +13,12 @@ protocol CleanupModelServiceDelegate: AnyObject {
     func cleanupModelDidFail(error: Error)
 }
 
-/// The result of one cleanup attempt: the text to use, the reason the
-/// model output was discarded when cleanup fell back to the raw
-/// transcript, and the sanitized model output before any fallback.
+/// The result of one cleanup attempt: the text to paste, the reason
+/// the final text failed validation (nil when it passed), and the
+/// sanitized model output that was chosen. The raw transcript is
+/// never returned as the result when the model produced any output;
+/// a cleanup that fails validation is still pasted because a
+/// slightly imperfect cleanup beats losing all punctuation.
 struct CleanupOutcome {
     let text: String
     let rejectionReason: String?
@@ -123,23 +126,30 @@ class CleanupModelService {
 
     /// Run transcript cleanup on the given text.
     ///
-    /// Returns the cleaned transcript, or the original text if cleanup
-    /// fails for any reason (model not loaded, inference error, etc.).
-    /// This matches the fallback behavior of the former OpenAI path.
+    /// Returns the cleaned transcript. Cleanup always runs: if the
+    /// first attempt fails validation, a corrective retry runs, and
+    /// the best cleaned output is pasted even when both attempts
+    /// fail validation. The raw transcript is returned only when the
+    /// model is not loaded or inference fails outright.
     func cleanupTranscript(_ transcript: String) async -> String {
         await cleanupTranscriptOutcome(transcript).text
     }
 
-    /// Run transcript cleanup and report why the model output was
-    /// rejected, if it was. Production callers use cleanupTranscript;
-    /// the debug probe uses this to see the raw rejection reason.
+    /// Run transcript cleanup and report the validation status of the
+    /// final text. Production callers use cleanupTranscript; the debug
+    /// probe uses this to see the raw validation outcome.
+    ///
+    /// The transcript is always cleaned: the first attempt runs, and
+    /// if validation rejects it, a second attempt runs with corrective
+    /// feedback naming the exact dropped and added words. If both
+    /// attempts fail validation, the best cleaned output is pasted
+    /// anyway. The raw transcript comes back only when the model is
+    /// not loaded or inference produced no output at all.
     func cleanupTranscriptOutcome(_ transcript: String) async -> CleanupOutcome {
         guard isLoaded, let container = modelContainer else {
             Log.general.error("Cleanup model not loaded, returning original transcript")
-            return CleanupOutcome(
-                text: transcript,
-                rejectionReason: "model not loaded",
-                rawOutput: nil
+            return finishOutcome(
+                input: transcript, text: transcript, reason: "model not loaded", attempts: 0
             )
         }
 
@@ -173,37 +183,104 @@ class CleanupModelService {
         )
 
         do {
-            let result = try await session.respond(to: userMessage)
+            let firstRaw = try await session.respond(to: userMessage)
+            let firstSanitized = CleanupContract.sanitizeOutput(firstRaw)
 
-            let sanitized = CleanupContract.sanitizeOutput(result)
-
-            if let rejectionReason = CleanupContract.validateCleanup(
-                input: transcript, output: sanitized
-            ) {
-                Log.general.error(
-                    "Cleanup model output rejected (\(rejectionReason, privacy: .public)), returning original transcript"
-                )
-                return CleanupOutcome(
-                    text: transcript,
-                    rejectionReason: rejectionReason,
-                    rawOutput: sanitized
+            if CleanupContract.validateCleanup(
+                input: transcript, output: firstSanitized
+            ) == nil {
+                return finishOutcome(
+                    input: transcript, text: firstSanitized, reason: nil, attempts: 1
                 )
             }
 
-            Log.general.info(
-                "Transcript cleanup completed: \(transcript.count, privacy: .public) chars in, \(sanitized.count, privacy: .public) chars out"
+            // The first attempt failed validation. Retry with
+            // corrective feedback naming the exact dropped and added
+            // words, and re-anchoring the transcript so the model
+            // re-cleans the text instead of discussing the feedback.
+            let firstDiff = CleanupContract.contentDiff(
+                input: transcript, output: firstSanitized
             )
-            return CleanupOutcome(text: sanitized, rejectionReason: nil, rawOutput: sanitized)
+            let retryRaw = try await session.respond(
+                to: CleanupContract.correctiveMessage(
+                    firstDiff, transcript: transcript
+                )
+            )
+            let retrySanitized = CleanupContract.sanitizeOutput(retryRaw)
+
+            if CleanupContract.validateCleanup(
+                input: transcript, output: retrySanitized
+            ) == nil {
+                Log.general.info("Cleanup retry passed validation")
+                return finishOutcome(
+                    input: transcript, text: retrySanitized, reason: nil, attempts: 2
+                )
+            }
+
+            // Both attempts failed validation. Paste whichever
+            // attempt kept the most of the transcript's words: a
+            // slightly imperfect cleanup beats losing all
+            // punctuation, so the raw transcript is never used when
+            // the model produced any output.
+            let retryDiff = CleanupContract.contentDiff(
+                input: transcript, output: retrySanitized
+            )
+            let inputWordCount = CleanupContract.normalizedWords(transcript).count
+            let useRetry =
+                Self.cleanupScore(
+                    retryDiff, inputWordCount: inputWordCount
+                ) > Self.cleanupScore(firstDiff, inputWordCount: inputWordCount)
+            let chosenText = useRetry ? retrySanitized : firstSanitized
+            let chosenDiff = useRetry ? retryDiff : firstDiff
+
+            if chosenText.isEmpty {
+                // The model produced nothing usable twice. There is
+                // no cleaned text to paste, so the raw transcript is
+                // the only remaining option.
+                return finishOutcome(
+                    input: transcript,
+                    text: transcript,
+                    reason: "cleanup produced no output after retry",
+                    attempts: 2
+                )
+            }
+            let reason =
+                (chosenDiff.rejectionReason ?? "empty output")
+                + " (pasting cleaned output anyway)"
+            return finishOutcome(
+                input: transcript, text: chosenText, reason: reason, attempts: 2
+            )
         } catch {
             Log.general.error(
-                "Cleanup failed: \(error.localizedDescription, privacy: .public), returning original transcript"
+                "Cleanup failed: \(error.localizedDescription, privacy: .public), no cleaned output available, returning original transcript"
             )
-            return CleanupOutcome(
+            return finishOutcome(
+                input: transcript,
                 text: transcript,
-                rejectionReason: "inference error: \(error.localizedDescription)",
-                rawOutput: nil
+                reason: "inference error: \(error.localizedDescription)",
+                attempts: 0
             )
         }
+    }
+
+    /// Log one cleanup run to the unified log and return the
+    /// outcome. This is the single exit path for every cleanup
+    /// result so the log always records exactly what was pasted and
+    /// why. Details use public privacy so the full input, output,
+    /// and reason are visible in `log show` / Console.
+    private func finishOutcome(
+        input: String, text: String, reason: String?, attempts: Int
+    ) -> CleanupOutcome {
+        if let reason {
+            Log.cleanup.error(
+                "Cleanup output not fully validated (\(reason, privacy: .public)), attempts: \(attempts, privacy: .public), input: \(input, privacy: .public), output: \(text, privacy: .public)"
+            )
+        } else {
+            Log.cleanup.info(
+                "Transcript cleanup completed: attempts: \(attempts, privacy: .public), \(input.count, privacy: .public) chars in, \(text.count, privacy: .public) chars out, input: \(input, privacy: .public), output: \(text, privacy: .public)"
+            )
+        }
+        return CleanupOutcome(text: text, rejectionReason: reason, rawOutput: text)
     }
 
     /// Unload the model from memory.
@@ -243,6 +320,15 @@ class CleanupModelService {
     }
 
     // MARK: - Private
+
+    /// Score a failed cleanup attempt by how much of the input it
+    /// kept: input words minus dropped minus added. Higher is closer
+    /// to a faithful cleanup.
+    private static func cleanupScore(
+        _ diff: CleanupContract.ContentDiff, inputWordCount: Int
+    ) -> Int {
+        inputWordCount - diff.droppedWords.count - diff.addedWords.count
+    }
 
     /// Flatten the contract's few-shot pairs into the user/assistant
     /// message history injected before each cleanup call.
